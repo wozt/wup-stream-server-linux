@@ -2,6 +2,8 @@
   "id": "zh-cn",
   "name": "简体中文",
   "translations": {
+    "GAMEPAD ONLY MODE": "仅 GamePad 模式",
+    "no capture - inputs & sensors active": "不采集画面 — 按键与传感器保持启用",
     "Theme:": "主题：",
     "Language:": "语言：",
     "Status": "状态",

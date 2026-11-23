@@ -7,6 +7,8 @@
 #include "x11util.h"
 #include "wupstream.h"
 #include <cairo/cairo.h>
+#include <pango/pangocairo.h>
+#include "i18n.h" /* WUP_V914_GAMEPAD_LOCALE */
 #include <pthread.h>
 #include <stdatomic.h>
 #include <stdarg.h>
@@ -84,32 +86,56 @@ static void apply_quality_env(const settings_t *s) {
 }
 
 /* static 854x480 BGRA test frame for "gamepad only" mode (no capture) */
-static void build_test_frame(unsigned char *frame) {
+/* WUP_V914_GAMEPAD_LOCALE: UTF-8 text layout with font fallback and wrapping.
+ * Called only on stream start or settings/language changes, NOT per video frame. */
+static void wup_gamepad_test_text(cairo_t *cr, const char *message,
+                                  const char *font, double center_y,
+                                  double red, double green, double blue) {
+    PangoLayout *layout = pango_cairo_create_layout(cr);
+    PangoFontDescription *desc = pango_font_description_from_string(font);
+    pango_layout_set_font_description(layout, desc);
+    pango_layout_set_width(layout, (FW - 48) * PANGO_SCALE);
+    pango_layout_set_wrap(layout, PANGO_WRAP_WORD_CHAR);
+    pango_layout_set_alignment(layout, PANGO_ALIGN_CENTER);
+    pango_layout_set_text(layout, message, -1);
+    int text_width = 0, text_height = 0;
+    pango_layout_get_pixel_size(layout, &text_width, &text_height);
+    cairo_set_source_rgb(cr, red, green, blue);
+    cairo_move_to(cr, 24, center_y - text_height / 2.0);
+    pango_cairo_show_layout(cr, layout);
+    pango_font_description_free(desc);
+    g_object_unref(layout);
+}
+
+static void build_test_frame(unsigned char *frame, const char *language_id) {
+    /* The streaming worker owns its own short-lived catalog. Never access the
+     * GTK thread's i18n instance or load fonts for a black frame. */
+    wup_i18n_t *tr = wup_i18n_new(language_id);
+    const char *title = wup_i18n_lookup(tr, "GAMEPAD ONLY MODE");
+    const char *subtitle = wup_i18n_lookup(tr, "no capture - inputs & sensors active");
     cairo_surface_t *surf = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, FW, FH);
+    if (cairo_surface_status(surf) != CAIRO_STATUS_SUCCESS) {
+        memset(frame, 0, (size_t)FW * FH * 4);
+        cairo_surface_destroy(surf);
+        wup_i18n_free(tr);
+        return;
+    }
     cairo_t *cr = cairo_create(surf);
     cairo_set_source_rgb(cr, 0.07, 0.08, 0.12);
     cairo_paint(cr);
-    cairo_select_font_face(cr, "Sans", CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_BOLD);
-    cairo_set_font_size(cr, 44);
-    cairo_set_source_rgb(cr, 0.35, 0.75, 1.0);
-    const char *t1 = "GAMEPAD ONLY MODE";
-    cairo_text_extents_t te;
-    cairo_text_extents(cr, t1, &te);
-    cairo_move_to(cr, (FW - te.width) / 2, FH / 2 - 24);
-    cairo_show_text(cr, t1);
-    cairo_select_font_face(cr, "Sans", CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_NORMAL);
-    cairo_set_font_size(cr, 22);
-    cairo_set_source_rgb(cr, 0.65, 0.65, 0.72);
-    const char *t2 = "no capture - inputs & sensors active";
-    cairo_text_extents(cr, t2, &te);
-    cairo_move_to(cr, (FW - te.width) / 2, FH / 2 + 26);
-    cairo_show_text(cr, t2);
+    wup_gamepad_test_text(cr, title, "Sans Bold 40", FH / 2.0 - 35,
+                          0.35, 0.75, 1.0);
+    wup_gamepad_test_text(cr, subtitle, "Sans 22", FH / 2.0 + 35,
+                          0.65, 0.65, 0.72);
     cairo_destroy(cr);
+    cairo_surface_flush(surf);
     int stride = cairo_image_surface_get_stride(surf);
     const unsigned char *data = cairo_image_surface_get_data(surf);
     for (int y = 0; y < FH; y++)
-        memcpy(frame + (size_t)y * FW * 4, data + (size_t)y * stride, (size_t)FW * 4);
+        memcpy(frame + (size_t)y * FW * 4,
+               data + (size_t)y * stride, (size_t)FW * 4);
     cairo_surface_destroy(surf);
+    wup_i18n_free(tr);
 }
 
 /* TV button on the pad: advance to the next monitor (screen source only) */
@@ -197,7 +223,9 @@ static void *server_thread(void *arg) {
 
         int static_ok = 0;
         if (s->gamepad_only) {
-            build_test_frame(frame);
+            /* Honor Black screen before the FIRST encoded frame. */
+            if (s->gamepad_only_black) memset(frame, 0, (size_t)FW * FH * 4);
+            else build_test_frame(frame, s->language_id);
             static_ok = 1;
         } else if (region_is_cleared(s)) {
             memset(frame, 0, FW * FH * 4);
@@ -283,7 +311,7 @@ static void *server_thread(void *arg) {
                 }
                 if (!static_ok) {
                     if (s->gamepad_only_black) memset(frame, 0, FW * FH * 4);
-                    else build_test_frame(frame);
+                    else build_test_frame(frame, s->language_id);
                     static_ok = 1;
                 }
             } else if (region_is_cleared(s)) {

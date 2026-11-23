@@ -2,6 +2,8 @@
   "id": "ru",
   "name": "Русский",
   "translations": {
+    "GAMEPAD ONLY MODE": "РЕЖИМ ТОЛЬКО GAMEPAD",
+    "no capture - inputs & sensors active": "Без захвата — управление и датчики активны",
     "Theme:": "Тема:",
     "Language:": "Язык:",
     "Status": "Состояние",

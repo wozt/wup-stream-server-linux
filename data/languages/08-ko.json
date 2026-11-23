@@ -2,6 +2,8 @@
   "id": "ko",
   "name": "한국어",
   "translations": {
+    "GAMEPAD ONLY MODE": "게임패드 전용 모드",
+    "no capture - inputs & sensors active": "화면 캡처 없음 — 입력과 센서 활성",
     "Theme:": "테마:",
     "Language:": "언어:",
     "Status": "상태",

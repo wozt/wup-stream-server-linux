@@ -3,6 +3,7 @@ project('wupstreamd', 'c',
   default_options: ['c_std=c11', 'warning_level=2'])
 
 gtkdep = dependency('gtk+-3.0')
+pangocairo = dependency('pangocairo') # WUP_V914_GAMEPAD_LOCALE
 x11 = dependency('x11')
 xrandr = dependency('xrandr')
 xtst = dependency('xtst')
@@ -37,7 +38,7 @@ executable('wupstreamd',
   'src/viz.c',
   'src/i18n.c', # WUP_V6_JSON_LANGUAGES
   include_directories: [include_directories('src'), wup_inc],
-  dependencies: [gtkdep, x11, xrandr, xtst, xext, xinerama, json_glib, threads, m_dep, swscale, xcb, xcbshm, x11xcb, pulse, cairo],
+  dependencies: [gtkdep, pangocairo, x11, xrandr, xtst, xext, xinerama, json_glib, threads, m_dep, swscale, xcb, xcbshm, x11xcb, pulse, cairo],
   link_args: [wup_lib],
   install: true)
 

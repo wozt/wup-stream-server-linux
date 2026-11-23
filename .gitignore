@@ -3,3 +3,4 @@ build/
 libx11*
 *.bak*
 dist/
+*.AppImage

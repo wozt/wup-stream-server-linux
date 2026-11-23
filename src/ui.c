@@ -452,6 +452,7 @@ static void wup_language_changed(GtkComboBox *combo,ui_t *u) {
     g_strlcpy(u->s->language_id,wup_i18n_selected(u->i18n),
               sizeof(u->s->language_id));
     wup_apply_language(u);
+    server_sync_settings(u->srv); /* WUP_V914_GAMEPAD_LOCALE */
     schedule_save(u);
 }
 
@@ -466,6 +467,7 @@ static void wup_language_reload(GtkButton *button,ui_t *u) {
     g_strlcpy(u->s->language_id,wup_i18n_selected(u->i18n),
               sizeof(u->s->language_id));
     wup_apply_language(u);
+    server_sync_settings(u->srv); /* WUP_V914_GAMEPAD_LOCALE */
     schedule_save(u);
 }
 

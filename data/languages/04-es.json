@@ -2,6 +2,8 @@
   "id": "es",
   "name": "Español",
   "translations": {
+    "GAMEPAD ONLY MODE": "MODO SOLO GAMEPAD",
+    "no capture - inputs & sensors active": "Sin captura — controles y sensores activos",
     "Theme:": "Tema:",
     "Language:": "Idioma:",
     "Status": "Estado",

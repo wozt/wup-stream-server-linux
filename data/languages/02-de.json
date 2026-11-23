@@ -2,6 +2,8 @@
   "id": "de",
   "name": "Deutsch",
   "translations": {
+    "GAMEPAD ONLY MODE": "NUR GAMEPAD-MODUS",
+    "no capture - inputs & sensors active": "Keine Aufnahme — Eingaben und Sensoren aktiv",
     "Theme:": "Design:",
     "Language:": "Sprache:",
     "Status": "Status",
