@@ -672,6 +672,8 @@ static void on_aspect_changed(GtkComboBox *cb, ui_t *u) {
     commit_capture(u);
 }
 
+static char *wup_wiiu_svg_path(const char *file);
+
 static GtkWidget *build_source_section(ui_t *u) {
     GtkWidget *sec = mk_section("Video Source");
     int r = 0;
@@ -687,7 +689,34 @@ static GtkWidget *build_source_section(ui_t *u) {
     gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(u->src_combo), "Screen region");
     gtk_combo_box_set_active(GTK_COMBO_BOX(u->src_combo), u->s->source_type);
     g_signal_connect(u->src_combo, "changed", G_CALLBACK(on_src_type_changed), u);
-    grid_row(grid, &r, "Stream:", u->src_combo);
+    /* WUP_V93_TV_CYCLE_HINT: do not let GtkGrid's broad first column
+     * push this selector to the right. Use the same left edge as Monitor. */
+    GtkWidget *stream_row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
+    GtkWidget *stream_label = mk_label("Stream:");
+    gtk_label_set_width_chars(GTK_LABEL(stream_label), 9);
+    gtk_box_pack_start(GTK_BOX(stream_row), stream_label, FALSE, FALSE, 0);
+    gtk_widget_set_size_request(u->src_combo, 190, -1);
+    gtk_box_pack_start(GTK_BOX(stream_row), u->src_combo, FALSE, FALSE, 0);
+
+    /* The already-shipped Wii U SVG has the TV lettering in the icon. */
+    char *tv_file = wup_wiiu_svg_path("btn_tv.svg");
+    GdkPixbuf *tv_pixbuf = tv_file ?
+        gdk_pixbuf_new_from_file_at_scale(tv_file, 22, 22, TRUE, NULL) : NULL;
+    g_free(tv_file);
+    GtkWidget *tv_image = tv_pixbuf ?
+        gtk_image_new_from_pixbuf(tv_pixbuf) : mk_label("TV");
+    if (tv_pixbuf) g_object_unref(tv_pixbuf);
+    gtk_widget_set_size_request(tv_image, 22, 22);
+    gtk_box_pack_start(GTK_BOX(stream_row), tv_image, FALSE, FALSE, 0);
+
+    /* English is the source string; i18n automatically translates labels
+     * and tooltips whenever a JSON language is selected. */
+    GtkWidget *tv_hint = mk_label("to cycle between screens");
+    gtk_label_set_ellipsize(GTK_LABEL(tv_hint), PANGO_ELLIPSIZE_END);
+    gtk_widget_set_hexpand(tv_hint, TRUE);
+    gtk_widget_set_tooltip_text(tv_hint, "to cycle between screens");
+    gtk_box_pack_start(GTK_BOX(stream_row), tv_hint, TRUE, TRUE, 0);
+    gtk_grid_attach(GTK_GRID(grid), stream_row, 0, r++, 2, 1);
 
     /* monitor row: label + combo hidden together */
     u->scr_row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
