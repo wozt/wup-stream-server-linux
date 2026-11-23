@@ -25,6 +25,8 @@ struct ui_t {
     GtkWidget *src_combo, *scr_row, *screen_combo, *win_row, *win_combo;
     GtkListStore *win_store;
     GtkWidget *region_box, *region_lbl;
+    GtkWidget *region_button;
+    gboolean region_picking;
     /* quality */
     GtkWidget *preset_combo, *crf_spin, *kbps_spin, *gop_spin, *lowlat_chk;
     GtkWidget *src_frame, *qual_frame;
@@ -547,11 +549,6 @@ static GtkWidget *mk_section(const char *title) {
 
 static GtkWidget *frame_of(GtkWidget *vb) { return gtk_widget_get_parent(vb); }
 
-static void grid_row(GtkWidget *grid, int *r, const char *label, GtkWidget *w) {
-    gtk_grid_attach(GTK_GRID(grid), mk_label(label), 0, (*r)++, 1, 1);
-    gtk_grid_attach(GTK_GRID(grid), w, 1, *r - 1, 1, 1);
-}
-
 /* ---------- source ---------- */
 
 static void refresh_screens(ui_t *u) {
@@ -624,46 +621,71 @@ static void on_refresh_windows(GtkButton *b, ui_t *u) {
     refresh_windows(u);
 }
 
-/* region selection */
-typedef struct { ui_t *u; int x, y, w, h; } region_res_t;
+/* WUP_V94_REGION_PICKER: wait for the click release, hide our own UI for a
+ * clean desktop snapshot, then run a real X11 drag selector on a worker. */
+typedef struct {
+    ui_t *u;
+    int x, y, w, h;
+    gboolean ok;
+} region_res_t;
 
 static gboolean region_done_cb(gpointer p) {
     region_res_t *r = p;
     ui_t *u = r->u;
-    u->s->source.x = r->x;
-    u->s->source.y = r->y;
-    u->s->source.w = r->w;
-    u->s->source.h = r->h;
-    char lbl[128];
-    snprintf(lbl, sizeof lbl, "Region: %d,%d %dx%d", r->x, r->y, r->w, r->h);
-    gtk_label_set_text(GTK_LABEL(u->region_lbl), lbl);
-    commit_capture(u);
+    u->region_picking = FALSE;
+    if (r->ok) {
+        u->s->source.x = r->x;
+        u->s->source.y = r->y;
+        u->s->source.w = r->w;
+        u->s->source.h = r->h;
+        char label[96];
+        snprintf(label, sizeof label, "%d,%d  %dx%d", r->x, r->y, r->w, r->h);
+        gtk_label_set_text(GTK_LABEL(u->region_lbl), label);
+        /* Select automatically switches to Screen region on success. */
+        if (u->s->source_type != SRC_REGION)
+            gtk_combo_box_set_active(GTK_COMBO_BOX(u->src_combo), SRC_REGION);
+        else
+            commit_capture(u);
+    }
+    /* On Escape/right-click/errors, leave the old capture region untouched. */
+    gtk_widget_set_sensitive(u->region_button, TRUE);
+    gtk_widget_show(u->window);
+    gtk_window_present(GTK_WINDOW(u->window));
     g_free(r);
     return G_SOURCE_REMOVE;
 }
 
-static void *region_thread(void *arg) {
-    region_res_t *r = arg;
-    r->w = r->h = 0;
-    if (select_region(&r->x, &r->y, &r->w, &r->h))
-        g_idle_add(region_done_cb, r);
-    else
-        g_free(r);
+static void *region_thread(void *p) {
+    region_res_t *r = p;
+    r->ok = select_region(&r->x, &r->y, &r->w, &r->h) != 0;
+    g_idle_add(region_done_cb, r);
     return NULL;
+}
+
+static gboolean region_start_cb(gpointer p) {
+    region_res_t *r = p;
+    GThread *thread = g_thread_new("wup-select-region", region_thread, r);
+    g_thread_unref(thread);
+    return G_SOURCE_REMOVE;
 }
 
 static void on_region_clicked(GtkButton *b, ui_t *u) {
     (void)b;
+    if (u->region_picking) return;
+    u->region_picking = TRUE;
+    gtk_widget_set_sensitive(u->region_button, FALSE);
+    gtk_widget_hide(u->window);
+    /* Give the WM/compositor a frame to remove our window and GTK's grab. */
     region_res_t *r = g_new0(region_res_t, 1);
     r->u = u;
-    g_thread_new("region-select", region_thread, r);
+    g_timeout_add(180, region_start_cb, r);
 }
 
 static void on_src_type_changed(GtkComboBox *cb, ui_t *u) {
     u->s->source_type = gtk_combo_box_get_active(cb);
     gtk_widget_set_sensitive(u->scr_row, u->s->source_type == SRC_SCREEN);
     gtk_widget_set_sensitive(u->win_row, u->s->source_type == SRC_WINDOW);
-    gtk_widget_set_sensitive(u->region_box, u->s->source_type == SRC_REGION);
+    gtk_widget_set_sensitive(u->region_box, TRUE);
     commit_capture(u);
 }
 
@@ -674,104 +696,102 @@ static void on_aspect_changed(GtkComboBox *cb, ui_t *u) {
 
 static char *wup_wiiu_svg_path(const char *file);
 
+/* WUP_V94_SOURCE_ALIGN: shared label-size group guarantees identical
+ * control start X across all five rows (and adapts to translated text). */
+static GtkWidget *wup_source_row(GtkWidget *section, GtkSizeGroup *labels,
+                                 const char *label_text) {
+    GtkWidget *row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
+    GtkWidget *label = mk_label(label_text);
+    gtk_size_group_add_widget(labels, label);
+    gtk_box_pack_start(GTK_BOX(row), label, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(section), row, FALSE, FALSE, 0);
+    return row;
+}
+
 static GtkWidget *build_source_section(ui_t *u) {
     GtkWidget *sec = mk_section("Video Source");
-    int r = 0;
-    GtkWidget *grid = gtk_grid_new();
-    gtk_grid_set_row_spacing(GTK_GRID(grid), 1);
-    gtk_grid_set_column_spacing(GTK_GRID(grid), 8);
-    gtk_box_pack_start(GTK_BOX(sec), grid, FALSE, FALSE, 0);
+    GtkSizeGroup *labels = gtk_size_group_new(GTK_SIZE_GROUP_HORIZONTAL);
 
+    GtkWidget *stream_row = wup_source_row(sec, labels, "Stream:");
     u->src_combo = gtk_combo_box_text_new();
-    gtk_widget_set_hexpand(u->src_combo, FALSE);
     gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(u->src_combo), "Full screen");
     gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(u->src_combo), "Window (application)");
     gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(u->src_combo), "Screen region");
     gtk_combo_box_set_active(GTK_COMBO_BOX(u->src_combo), u->s->source_type);
-    g_signal_connect(u->src_combo, "changed", G_CALLBACK(on_src_type_changed), u);
-    /* WUP_V93_TV_CYCLE_HINT: do not let GtkGrid's broad first column
-     * push this selector to the right. Use the same left edge as Monitor. */
-    GtkWidget *stream_row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
-    GtkWidget *stream_label = mk_label("Stream:");
-    gtk_label_set_width_chars(GTK_LABEL(stream_label), 9);
-    gtk_box_pack_start(GTK_BOX(stream_row), stream_label, FALSE, FALSE, 0);
     gtk_widget_set_size_request(u->src_combo, 190, -1);
     gtk_box_pack_start(GTK_BOX(stream_row), u->src_combo, FALSE, FALSE, 0);
+    g_signal_connect(u->src_combo, "changed", G_CALLBACK(on_src_type_changed), u);
 
-    /* The already-shipped Wii U SVG has the TV lettering in the icon. */
-    char *tv_file = wup_wiiu_svg_path("btn_tv.svg");
-    GdkPixbuf *tv_pixbuf = tv_file ?
-        gdk_pixbuf_new_from_file_at_scale(tv_file, 22, 22, TRUE, NULL) : NULL;
-    g_free(tv_file);
+    /* Keep the already-shipped Wii U TV SVG + its translated help text. */
+    char *tv_path = wup_wiiu_svg_path("btn_tv.svg");
+    GdkPixbuf *tv_pixbuf = tv_path ?
+        gdk_pixbuf_new_from_file_at_scale(tv_path, 22, 22, TRUE, NULL) : NULL;
+    g_free(tv_path);
     GtkWidget *tv_image = tv_pixbuf ?
         gtk_image_new_from_pixbuf(tv_pixbuf) : mk_label("TV");
     if (tv_pixbuf) g_object_unref(tv_pixbuf);
     gtk_widget_set_size_request(tv_image, 22, 22);
     gtk_box_pack_start(GTK_BOX(stream_row), tv_image, FALSE, FALSE, 0);
-
-    /* English is the source string; i18n automatically translates labels
-     * and tooltips whenever a JSON language is selected. */
     GtkWidget *tv_hint = mk_label("to cycle between screens");
     gtk_label_set_ellipsize(GTK_LABEL(tv_hint), PANGO_ELLIPSIZE_END);
-    gtk_widget_set_hexpand(tv_hint, TRUE);
+    gtk_label_set_max_width_chars(GTK_LABEL(tv_hint), 35);
     gtk_widget_set_tooltip_text(tv_hint, "to cycle between screens");
     gtk_box_pack_start(GTK_BOX(stream_row), tv_hint, TRUE, TRUE, 0);
-    gtk_grid_attach(GTK_GRID(grid), stream_row, 0, r++, 2, 1);
 
-    /* monitor row: label + combo hidden together */
-    u->scr_row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
-    gtk_box_pack_start(GTK_BOX(u->scr_row), mk_label("Monitor:"), FALSE, FALSE, 0);
+    u->scr_row = wup_source_row(sec, labels, "Monitor:");
     u->screen_combo = gtk_combo_box_text_new();
-    gtk_widget_set_hexpand(u->screen_combo, FALSE);
+    gtk_widget_set_size_request(u->screen_combo, 288, -1);
     refresh_screens(u);
     g_signal_connect(u->screen_combo, "changed", G_CALLBACK(on_screen_changed), u);
-    gtk_box_pack_start(GTK_BOX(u->scr_row), u->screen_combo, TRUE, TRUE, 0);
-    gtk_grid_attach(GTK_GRID(grid), u->scr_row, 0, r++, 2, 1);
+    gtk_box_pack_start(GTK_BOX(u->scr_row), u->screen_combo, FALSE, FALSE, 0);
 
-    /* window row: label + combo + refresh, hidden together */
-    u->win_row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
-    gtk_box_pack_start(GTK_BOX(u->win_row), mk_label("Window:"), FALSE, FALSE, 0);
+    u->win_row = wup_source_row(sec, labels, "Window:");
     u->win_store = gtk_list_store_new(2, G_TYPE_UINT64, G_TYPE_STRING);
     u->win_combo = gtk_combo_box_new_with_model(GTK_TREE_MODEL(u->win_store));
-    gtk_widget_set_hexpand(u->win_combo, FALSE);
     GtkCellRenderer *cr = gtk_cell_renderer_text_new();
     gtk_cell_layout_pack_start(GTK_CELL_LAYOUT(u->win_combo), cr, TRUE);
     gtk_cell_layout_add_attribute(GTK_CELL_LAYOUT(u->win_combo), cr, "text", 1);
+    gtk_widget_set_size_request(u->win_combo, 288, -1);
     refresh_windows(u);
     g_signal_connect(u->win_combo, "changed", G_CALLBACK(on_win_changed), u);
-    gtk_box_pack_start(GTK_BOX(u->win_row), u->win_combo, TRUE, TRUE, 0);
-    GtkWidget *wbtn = symbol_button("view-refresh-symbolic", "R", "Refresh window list");
-    g_signal_connect(wbtn, "clicked", G_CALLBACK(on_refresh_windows), u);
-    gtk_box_pack_start(GTK_BOX(u->win_row), wbtn, FALSE, FALSE, 0);
-    gtk_grid_attach(GTK_GRID(grid), u->win_row, 0, r++, 2, 1);
+    gtk_box_pack_start(GTK_BOX(u->win_row), u->win_combo, FALSE, FALSE, 0);
+    GtkWidget *refresh = symbol_button("view-refresh-symbolic", "R", "Refresh window list");
+    g_signal_connect(refresh, "clicked", G_CALLBACK(on_refresh_windows), u);
+    gtk_box_pack_start(GTK_BOX(u->win_row), refresh, FALSE, FALSE, 0);
 
-    /* region row: label + button + info, hidden together */
-    u->region_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
-    gtk_box_pack_start(GTK_BOX(u->region_box), mk_label("Region:"), FALSE, FALSE, 0);
-    GtkWidget *rbtn = gtk_button_new_with_label("Select...");
-    button_symbol(rbtn, "edit-select-all-symbolic");
-    g_signal_connect(rbtn, "clicked", G_CALLBACK(on_region_clicked), u);
+    u->region_box = wup_source_row(sec, labels, "Region:");
+    GtkWidget *select = gtk_button_new_with_label("Select...");
+    u->region_button = select;
+    button_symbol(select, "edit-select-all-symbolic");
+    gtk_widget_set_tooltip_text(select, "Draw a capture rectangle on the desktop (Esc cancels)");
+    g_signal_connect(select, "clicked", G_CALLBACK(on_region_clicked), u);
+    gtk_box_pack_start(GTK_BOX(u->region_box), select, FALSE, FALSE, 0);
     u->region_lbl = gtk_label_new("");
     gtk_label_set_xalign(GTK_LABEL(u->region_lbl), 0);
-    if (u->s->source.w > 0)
-        gtk_label_set_text(GTK_LABEL(u->region_lbl), "region set (click to change)");
-    gtk_box_pack_start(GTK_BOX(u->region_box), rbtn, FALSE, FALSE, 0);
-    gtk_box_pack_start(GTK_BOX(u->region_box), u->region_lbl, TRUE, TRUE, 0);
-    gtk_grid_attach(GTK_GRID(grid), u->region_box, 0, r++, 2, 1);
+    if (u->s->source.w > 0 && u->s->source.h > 0) {
+        char dimensions[96];
+        snprintf(dimensions, sizeof dimensions, "%d,%d  %dx%d",
+                 u->s->source.x, u->s->source.y,
+                 u->s->source.w, u->s->source.h);
+        gtk_label_set_text(GTK_LABEL(u->region_lbl), dimensions);
+    }
+    gtk_box_pack_start(GTK_BOX(u->region_box), u->region_lbl, FALSE, FALSE, 0);
 
-    /* aspect */
+    GtkWidget *fit_row = wup_source_row(sec, labels, "854x480 fit:");
     GtkWidget *aspect = gtk_combo_box_text_new();
-    gtk_widget_set_hexpand(aspect, FALSE);
     gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(aspect), "Letterbox (black bars)");
     gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(aspect), "Crop (fill)");
     gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(aspect), "Stretch (distort)");
     gtk_combo_box_set_active(GTK_COMBO_BOX(aspect), u->s->aspect);
+    gtk_widget_set_size_request(aspect, 288, -1);
     g_signal_connect(aspect, "changed", G_CALLBACK(on_aspect_changed), u);
-    grid_row(grid, &r, "854x480 fit:", aspect);
+    gtk_box_pack_start(GTK_BOX(fit_row), aspect, FALSE, FALSE, 0);
 
+    /* Widgets keep a reference through their GtkSizeGroup membership. */
+    g_object_unref(labels);
     gtk_widget_set_sensitive(u->scr_row, u->s->source_type == SRC_SCREEN);
     gtk_widget_set_sensitive(u->win_row, u->s->source_type == SRC_WINDOW);
-    gtk_widget_set_sensitive(u->region_box, u->s->source_type == SRC_REGION);
+    gtk_widget_set_sensitive(u->region_box, TRUE);
     return frame_of(sec);
 }
 
