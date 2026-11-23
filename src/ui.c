@@ -1549,6 +1549,12 @@ static void on_audio_toggled(GtkToggleButton *tb, ui_t *u) {
     commit_reconnect(u);
 }
 
+/* WUP_V96_PAD_VOLUME: live preference; don't restart the stream/audio. */
+static void on_pad_volume_pc_toggled(GtkToggleButton *tb, ui_t *u) {
+    u->s->pad_volume_controls_pc = gtk_toggle_button_get_active(tb);
+    commit_live(u);
+}
+
 static void on_refresh_monitors(GtkButton *b, ui_t *u) {
     (void)b;
     refresh_monitors(u);
@@ -1557,15 +1563,31 @@ static void on_refresh_monitors(GtkButton *b, ui_t *u) {
 static GtkWidget *build_audio_section(ui_t *u) {
     GtkWidget *sec = mk_section("Audio");
 
+    /* Keep the new OS-volume checkbox in the free space on the RIGHT,
+     * alongside the existing two audio checkboxes, not below the source. */
+    GtkWidget *audio_top = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 10);
+    GtkWidget *audio_left = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+    gtk_box_pack_start(GTK_BOX(sec), audio_top, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(audio_top), audio_left, TRUE, TRUE, 0);
+
     u->aout_chk = gtk_check_button_new_with_label("Send PC audio to GamePad");
     gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(u->aout_chk), u->s->audio_pc_to_pad);
     g_signal_connect(u->aout_chk, "toggled", G_CALLBACK(on_audio_toggled), u);
-    gtk_box_pack_start(GTK_BOX(sec), u->aout_chk, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(audio_left), u->aout_chk, FALSE, FALSE, 0);
 
     u->ain_chk = gtk_check_button_new_with_label("Send GamePad microphone to PC");
     gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(u->ain_chk), u->s->audio_pad_to_pc);
     g_signal_connect(u->ain_chk, "toggled", G_CALLBACK(on_audio_toggled), u);
-    gtk_box_pack_start(GTK_BOX(sec), u->ain_chk, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(audio_left), u->ain_chk, FALSE, FALSE, 0);
+
+    GtkWidget *pad_vol = gtk_check_button_new_with_label("GamePad slider → PC volume");
+    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(pad_vol),
+                                 u->s->pad_volume_controls_pc);
+    gtk_widget_set_tooltip_text(pad_vol,
+        "Use the GamePad volume slider to control PC volume (0–100%); inactive on a black screen");
+    g_signal_connect(pad_vol, "toggled", G_CALLBACK(on_pad_volume_pc_toggled), u);
+    gtk_widget_set_valign(pad_vol, GTK_ALIGN_CENTER);
+    gtk_box_pack_start(GTK_BOX(audio_top), pad_vol, FALSE, FALSE, 0);
 
     GtkWidget *mrow = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
     gtk_box_pack_start(GTK_BOX(mrow), mk_label("PC audio source:"), FALSE, FALSE, 0);

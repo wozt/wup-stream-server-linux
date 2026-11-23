@@ -34,6 +34,7 @@ void settings_defaults(settings_t *s) {
     s->kbps = 10000;
     s->audio_pc_to_pad = 1;
     s->audio_pad_to_pc = 0;
+    s->pad_volume_controls_pc = 1; /* Preserve previous default behavior */
     s->low_latency = 1;
     snprintf(s->audio_monitor, sizeof s->audio_monitor, "default");
     s->ui_theme = 2; /* V4 default, for migration only */
@@ -109,6 +110,7 @@ settings_t *settings_load(void) {
     s->gop = json_int(root, "gop", s->gop);
     s->audio_pc_to_pad = json_int(root, "audio_pc_to_pad", s->audio_pc_to_pad);
     s->audio_pad_to_pc = json_int(root, "audio_pad_to_pc", s->audio_pad_to_pc);
+    s->pad_volume_controls_pc = json_int(root, "pad_volume_controls_pc", s->pad_volume_controls_pc);
     s->gamepad_only = json_int(root, "gamepad_only", 0);
     s->gamepad_only_black = json_int(root, "gamepad_only_black", 0);
     json_str(root, "audio_monitor", s->audio_monitor, sizeof s->audio_monitor);
@@ -220,6 +222,7 @@ void settings_save(settings_t *s) {
     json_object_set_int_member(root, "gop", s->gop);
     json_object_set_int_member(root, "audio_pc_to_pad", s->audio_pc_to_pad);
     json_object_set_int_member(root, "audio_pad_to_pc", s->audio_pad_to_pc);
+    json_object_set_int_member(root, "pad_volume_controls_pc", s->pad_volume_controls_pc);
     json_object_set_int_member(root, "gamepad_only", s->gamepad_only);
     json_object_set_int_member(root, "gamepad_only_black", s->gamepad_only_black);
     json_object_set_string_member(root, "audio_monitor", s->audio_monitor);

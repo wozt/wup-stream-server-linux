@@ -47,6 +47,8 @@
     "_Save": "_Speichern",
     "Send PC audio to GamePad": "PC-Audio an GamePad senden",
     "Send GamePad microphone to PC": "GamePad-Mikrofon an PC senden",
+    "GamePad slider → PC volume": "GamePad-Regler → PC-Lautstärke",
+    "Use the GamePad volume slider to control PC volume (0–100%); inactive on a black screen": "GamePad-Lautstärkeregler steuert die PC-Lautstärke (0–100 %); bei schwarzem Bildschirm inaktiv",
     "PC audio source:": "PC-Audioquelle:",
     "Mode:": "Modus:",
     "Virtual gamepad (evdev)": "Virtuelles Gamepad (evdev)",

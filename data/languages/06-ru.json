@@ -47,6 +47,8 @@
     "_Save": "_Сохранить",
     "Send PC audio to GamePad": "Звук ПК на GamePad",
     "Send GamePad microphone to PC": "Микрофон GamePad на ПК",
+    "GamePad slider → PC volume": "Громкость ПК с GamePad",
+    "Use the GamePad volume slider to control PC volume (0–100%); inactive on a black screen": "Ползунок GamePad регулирует громкость ПК (0–100 %); не действует при чёрном экране",
     "PC audio source:": "Источник звука ПК:",
     "Mode:": "Режим:",
     "Virtual gamepad (evdev)": "Виртуальный геймпад (evdev)",

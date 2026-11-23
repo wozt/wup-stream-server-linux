@@ -468,32 +468,42 @@ void input_dispatch(input_ctx_t *ctx, const settings_t *s, const wupstream_input
     /* keymap may have been edited in the UI: reload cheaply each call? no —
        apply_keysyms called by UI on change. cached here. */
 
-    /* pad volume -> PC volume: async spawn + 250ms debounce so the stream
-       thread never blocks on pactl */
-    if (in->volume >= 0 && in->volume != ctx->pad_volume) {
+    /* WUP_V96_PAD_VOLUME: only control the OS volume while real desktop
+     * video is active. GamePad-only and cleared regions must be silent as
+     * far as OS-volume changes are concerned, even though input stays live.
+     * The hardware reports a RAW 0..255 value (wupstream_input_t.volume).
+     * Our pactl command is an absolute, strictly bounded 0..100%% value.
+     * Remember the last value only when it was actually submitted: rapid
+     * slider movements then settle to the FINAL position after 250 ms. */
+    gboolean pc_volume_enabled = s->pad_volume_controls_pc &&
+        !s->gamepad_only &&
+        !(s->source_type == SRC_REGION &&
+          (s->source.w <= 0 || s->source.h <= 0));
+    if (!pc_volume_enabled) {
+        ctx->pad_volume = -1; /* resynchronize when normal video resumes */
+    } else if (in->volume >= 0 && in->volume != ctx->pad_volume) {
         struct timespec now;
         clock_gettime(CLOCK_MONOTONIC, &now);
         double t = now.tv_sec + now.tv_nsec / 1e9;
-        ctx->pad_volume = in->volume;
-        if (t - ctx->vol_last > 0.25) {
-            ctx->vol_last = t;
-            /* GLib's spawn parser is NOT a shell: $(...) and 2>&1
-             * were passed literally to pactl, causing its volume error.
-             * @DEFAULT_SINK@ is supported natively by pactl. */
-            int pct = in->volume * 100 / 255;
-            if (pct < 0) pct = 0;
+        if (t - ctx->vol_last >= 0.25) {
+            int raw = in->volume;
+            if (raw > 255) raw = 255;
+            int pct = (raw * 100 + 127) / 255;
             if (pct > 100) pct = 100;
             char value[16];
             snprintf(value, sizeof value, "%d%%", pct);
             gchar *argv[] = {"pactl", "set-sink-volume", "@DEFAULT_SINK@", value, NULL};
             GError *error = NULL;
-            if (!g_spawn_async(NULL, argv, NULL,
+            if (g_spawn_async(NULL, argv, NULL,
                     G_SPAWN_SEARCH_PATH | G_SPAWN_STDOUT_TO_DEV_NULL |
                     G_SPAWN_STDERR_TO_DEV_NULL,
                     NULL, NULL, NULL, &error)) {
+                ctx->pad_volume = in->volume;
+            } else {
                 g_warning("Cannot launch pactl: %s", error->message);
                 g_clear_error(&error);
             }
+            ctx->vol_last = t;
         }
     }
 
@@ -533,8 +543,10 @@ void input_dispatch(input_ctx_t *ctx, const settings_t *s, const wupstream_input
             int gx = (int)(gyro[0] * GYRO_STICK_PER_DPS * g);
             int gy = (int)(gyro[1] * GYRO_STICK_PER_DPS * g);
             rx += gx; ry += gy;
-            if (rx > 32767) rx = 32767; if (rx < -32767) rx = -32767;
-            if (ry > 32767) ry = 32767; if (ry < -32767) ry = -32767;
+            if (rx > 32767) rx = 32767;
+            if (rx < -32767) rx = -32767;
+            if (ry > 32767) ry = 32767;
+            if (ry < -32767) ry = -32767;
         }
         if (lx != ctx->prev_lx) { uinput_emit(ctx, EV_ABS, ABS_X, lx); changed = 1; }
         if (ly != ctx->prev_ly) { uinput_emit(ctx, EV_ABS, ABS_Y, ly); changed = 1; }

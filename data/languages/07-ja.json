@@ -47,6 +47,8 @@
     "_Save": "_保存",
     "Send PC audio to GamePad": "PC 音声を GamePad へ",
     "Send GamePad microphone to PC": "GamePad マイクを PC へ",
+    "GamePad slider → PC volume": "GamePadでPC音量を調整",
+    "Use the GamePad volume slider to control PC volume (0–100%); inactive on a black screen": "GamePadの音量スライダーでPCの音量を0～100%に調整します。黒画面では無効です",
     "PC audio source:": "PC 音声入力:",
     "Mode:": "モード:",
     "Virtual gamepad (evdev)": "仮想ゲームパッド (evdev)",

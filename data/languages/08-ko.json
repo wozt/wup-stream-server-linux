@@ -47,6 +47,8 @@
     "_Save": "_저장",
     "Send PC audio to GamePad": "PC 오디오를 GamePad로",
     "Send GamePad microphone to PC": "GamePad 마이크를 PC로",
+    "GamePad slider → PC volume": "GamePad로 PC 볼륨 조절",
+    "Use the GamePad volume slider to control PC volume (0–100%); inactive on a black screen": "GamePad 볼륨 슬라이더로 PC 볼륨을 0~100% 조절합니다. 검은 화면에서는 작동하지 않습니다",
     "PC audio source:": "PC 오디오 소스:",
     "Mode:": "모드:",
     "Virtual gamepad (evdev)": "가상 게임패드 (evdev)",

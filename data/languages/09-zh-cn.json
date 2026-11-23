@@ -47,6 +47,8 @@
     "_Save": "_保存",
     "Send PC audio to GamePad": "电脑音频传至 GamePad",
     "Send GamePad microphone to PC": "GamePad 麦克风传至电脑",
+    "GamePad slider → PC volume": "GamePad 控制电脑音量",
+    "Use the GamePad volume slider to control PC volume (0–100%); inactive on a black screen": "使用 GamePad 音量滑块调节电脑音量（0–100%）；黑屏时不生效",
     "PC audio source:": "电脑音频源：",
     "Mode:": "模式：",
     "Virtual gamepad (evdev)": "虚拟手柄 (evdev)",

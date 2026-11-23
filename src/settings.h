@@ -63,6 +63,7 @@ typedef struct {
     input_cfg_t input;
     int audio_pc_to_pad;
     int audio_pad_to_pc;
+    int pad_volume_controls_pc; /* WUP_V96_PAD_VOLUME */
     char audio_monitor[128];
     int ui_theme; /* V4 numeric setting kept for migration */
     char theme_id[64]; /* WUP_V5_JSON_THEMES */
