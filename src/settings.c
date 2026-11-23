@@ -151,6 +151,31 @@ settings_t *settings_load(void) {
                 if (v) snprintf(s->input.stick_keys[i], 32, "%s", v);
             }
         }
+        json_str(in, "cmd_preset", s->input.cmd_preset, sizeof s->input.cmd_preset);
+        JsonArray *cps = json_arr(in, "cmd_presets");
+        if (cps) {
+            int n = json_array_get_length(cps);
+            if (n > 8) n = 8;
+            for (int i = 0; i < n; i++) {
+                JsonObject *po = json_array_get_object_element(cps, i);
+                if (!po) continue;
+                cmd_preset_t *cp = &s->input.cmd_presets[i];
+                json_str(po, "name", cp->name, sizeof cp->name);
+                JsonArray *pk = json_arr(po, "keys");
+                if (pk)
+                    for (int j = 0; j < 18 && j < json_array_get_length(pk); j++) {
+                        const char *v = json_array_get_string_element(pk, j);
+                        if (v) snprintf(cp->keys[j], 32, "%s", v);
+                    }
+                JsonArray *ps = json_arr(po, "stick_keys");
+                if (ps)
+                    for (int j = 0; j < 8 && j < json_array_get_length(ps); j++) {
+                        const char *v = json_array_get_string_element(ps, j);
+                        if (v) snprintf(cp->stick_keys[j], 32, "%s", v);
+                    }
+            }
+            s->input.ncmd = n;
+        }
     }
     JsonArray *pres = json_arr(root, "presets");
     if (pres) {
@@ -219,6 +244,22 @@ void settings_save(settings_t *s) {
     for (int i = 0; i < 8; i++)
         json_array_add_string_element(skeys, s->input.stick_keys[i]);
     json_object_set_array_member(in, "stick_keys", skeys);
+    json_object_set_string_member(in, "cmd_preset", s->input.cmd_preset);
+    JsonArray *cps = json_array_new();
+    for (int i = 0; i < s->input.ncmd; i++) {
+        JsonObject *po = json_object_new();
+        json_object_set_string_member(po, "name", s->input.cmd_presets[i].name);
+        JsonArray *pk = json_array_new();
+        for (int j = 0; j < 18; j++)
+            json_array_add_string_element(pk, s->input.cmd_presets[i].keys[j]);
+        json_object_set_array_member(po, "keys", pk);
+        JsonArray *ps = json_array_new();
+        for (int j = 0; j < 8; j++)
+            json_array_add_string_element(ps, s->input.cmd_presets[i].stick_keys[j]);
+        json_object_set_array_member(po, "stick_keys", ps);
+        json_array_add_object_element(cps, po);
+    }
+    json_object_set_array_member(in, "cmd_presets", cps);
     json_object_set_object_member(root, "input", in);
 
     JsonArray *pres = json_array_new();

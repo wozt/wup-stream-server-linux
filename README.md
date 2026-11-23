@@ -21,16 +21,20 @@ PulseAudio audio, virtual gamepad or keyboard/mouse injection.
 - **Inputs**: virtual evdev gamepad (`/dev/uinput`) **or** keyboard/mouse via
   XTest — selectable per session. Configurable key mapping for all buttons
   and the 8 stick directions, with button icons.
-- **Touch gestures** (touch-as-mouse, works in both modes): tap = click,
-  long press = right click, double-tap + drag = drag & drop,
-  triple-tap + drag = scroll.
+- **Touch gestures** (touch-as-mouse, works in both modes, confined to the
+  streamed area): tap = click, drag = draw, long press = right click,
+  double-tap + hold/move = drag & drop, triple-tap + move = scroll.
+- **Command presets**: named per-app keyboard/mouse mappings (buttons +
+  stick directions) saved as JSON, with chord support (`Ctrl+A`,
+  `Alt+Ctrl+G`) and a built-in syntax help.
 - **Gyroscope**: mouse or right-stick control, with several-second bias
   calibration persisted in settings. Off by default.
 - **TV button**: cycles to the next monitor while streaming a full screen.
 - **GamePad-only mode**: connects the pad and streams a test image (or black)
   with no capture — for sensor calibration. Audio is disabled in this mode.
 - **Live pad visualization**: buttons, sticks, touch, artificial-horizon
-  attitude indicator and gyro bars, drawn on a gamepad silhouette.
+  attitude indicator and gyro bars, drawn on a gamepad silhouette
+  (`src/viz.c`, fed via `pad_viz_feed()`).
 - Single instance (flock), autostart `.desktop`, tray icon, all UI in English.
 
 ## Requirements

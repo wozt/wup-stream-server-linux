@@ -23,6 +23,12 @@ enum { INMODE_GAMEPAD, INMODE_KBMOUSE };
 enum { GYRO_OFF, GYRO_MOUSE, GYRO_STICK };
 
 typedef struct {
+    char name[64];
+    char keys[18][32];
+    char stick_keys[8][32];
+} cmd_preset_t;
+
+typedef struct {
     int mode;              /* INMODE_* */
     int deadzone;          /* 0..500 raw stick units (~+-1100 full) */
     int sensitivity;       /* percent, mouse/stick speed */
@@ -35,6 +41,10 @@ typedef struct {
     char keys[18][32];
     /* stick direction -> key (kb/mouse): LX-,LX+,LY-,LY+, RX-,RX+,RY-,RY+ */
     char stick_keys[8][32];
+    /* named command presets (per-app keymaps), saved in settings.json */
+    cmd_preset_t cmd_presets[8];
+    int ncmd;
+    char cmd_preset[64];      /* active preset name, "" = custom */
     int touch_as_mouse;
     int right_stick_mouse;
 } input_cfg_t;

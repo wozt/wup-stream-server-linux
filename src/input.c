@@ -9,6 +9,7 @@
 #include <math.h>
 #include <sys/ioctl.h>
 #include <time.h>
+#include <strings.h>
 #include <glib.h>
 #include <linux/uinput.h>
 #include <linux/input.h>
@@ -64,6 +65,8 @@ struct input_ctx {
     int touch_gesture;           /* 0=undecided, 1=drag, 2=scroll, 3=rclick held */
     int touch_ly;                /* last touch y for scroll deltas */
     int touch_px, touch_py;      /* last warped pointer pos */
+    int touch_ax, touch_ay;      /* anchor point (pad coords) for slop */
+    int map_x, map_y, map_w, map_h, map_valid;  /* touch -> mouse target rect */
 };
 
 /* ---------- uinput virtual gamepad ---------- */
@@ -130,24 +133,72 @@ static int scale_stick(int raw, int deadzone) {
 
 /* ---------- kb/mouse mode ---------- */
 
-static KeySym cached_keysym[WBTN_COUNT];
-static KeySym stick_keysym[8];
+/* a key chord: "Ctrl+Alt+G" -> mods pressed first, then the key.
+   mods are stored in press order; release is reverse. */
+typedef struct {
+    KeySym key;
+    KeySym mods[4];
+    int nmods;
+} chord_t;
+
+static chord_t btn_chord[WBTN_COUNT];
+static chord_t stick_chord[8];
 static int keys_loaded = 0;
+
+/* friendly modifier names -> X keysym names */
+static const char *mod_keysym_name(const char *tok) {
+    if (!strcasecmp(tok, "ctrl") || !strcasecmp(tok, "control") || !strcasecmp(tok, "ctl"))
+        return "Control_L";
+    if (!strcasecmp(tok, "alt") || !strcasecmp(tok, "option"))
+        return "Alt_L";
+    if (!strcasecmp(tok, "shift"))
+        return "Shift_L";
+    if (!strcasecmp(tok, "super") || !strcasecmp(tok, "meta") ||
+        !strcasecmp(tok, "win") || !strcasecmp(tok, "cmd") || !strcasecmp(tok, "command"))
+        return "Super_L";
+    return NULL;
+}
+
+/* parse "Ctrl+Alt+G" / "a" / "F5" / "" into a chord. Unknown -> key=NoSymbol. */
+static void parse_chord(const char *str, chord_t *out) {
+    memset(out, 0, sizeof *out);
+    out->key = NoSymbol;
+    if (!str || !*str) return;
+    char buf[96];
+    snprintf(buf, sizeof buf, "%s", str);
+    char *toks[8];
+    int n = 0;
+    for (char *t = strtok(buf, "+"); t && n < 8; t = strtok(NULL, "+")) {
+        while (*t == ' ') t++;
+        char *e = t + strlen(t);
+        while (e > t && (e[-1] == ' ' || e[-1] == '\t')) *--e = 0;
+        if (*t) toks[n++] = t;
+    }
+    if (!n) return;
+    /* last token = the key; earlier ones = modifiers */
+    KeySym ks = xkeysym_for_name(toks[n - 1]);
+    if (ks == NoSymbol) return;
+    out->key = ks;
+    for (int i = 0; i < n - 1 && out->nmods < 4; i++) {
+        const char *mn = mod_keysym_name(toks[i]);
+        KeySym m = xkeysym_for_name(mn ? mn : toks[i]);
+        if (m != NoSymbol) out->mods[out->nmods++] = m;
+    }
+}
+
+static void apply_keysyms(const input_cfg_t *cfg);
 
 static void load_keysyms(const input_cfg_t *cfg) {
     if (keys_loaded) return;
-    for (int i = 0; i < WBTN_COUNT; i++)
-        cached_keysym[i] = xkeysym_for_name(cfg->keys[i]);
-    for (int i = 0; i < 8; i++)
-        stick_keysym[i] = xkeysym_for_name(cfg->stick_keys[i]);
+    apply_keysyms(cfg);
     keys_loaded = 1;
 }
 
 static void apply_keysyms(const input_cfg_t *cfg) {
     for (int i = 0; i < WBTN_COUNT; i++)
-        cached_keysym[i] = xkeysym_for_name(cfg->keys[i]);
+        parse_chord(cfg->keys[i], &btn_chord[i]);
     for (int i = 0; i < 8; i++)
-        stick_keysym[i] = xkeysym_for_name(cfg->stick_keys[i]);
+        parse_chord(cfg->stick_keys[i], &stick_chord[i]);
 }
 
 void input_reload_keys(input_ctx_t *ctx, const settings_t *s) {
@@ -175,16 +226,50 @@ int input_calib_poll(input_ctx_t *ctx, double out[3]) {
     return 1;
 }
 
-static void kb_buttons(input_ctx_t *ctx, const settings_t *s, uint32_t buttons) {
+static void chord_press(input_ctx_t *ctx, const chord_t *c, int down) {
     Display *d = ctx->dpy;
+    if (down) {
+        for (int i = 0; i < c->nmods; i++) xtest_key(d, c->mods[i], 1);
+        xtest_key(d, c->key, 1);
+    } else {
+        xtest_key(d, c->key, 0);
+        for (int i = c->nmods - 1; i >= 0; i--) xtest_key(d, c->mods[i], 0);
+    }
+}
+
+static void kb_buttons(input_ctx_t *ctx, const settings_t *s, uint32_t buttons) {
+    (void)s;
     uint32_t changed = buttons ^ ctx->prev_buttons;
     for (int i = 0; i < WBTN_COUNT; i++) {
         if (!(changed & wbtn_bit[i])) continue;
-        KeySym ks = cached_keysym[i];
-        if (ks == NoSymbol) continue;
-        int down = (buttons & wbtn_bit[i]) != 0;
-        xtest_key(d, ks, down);
+        const chord_t *c = &btn_chord[i];
+        if (c->key == NoSymbol) continue;
+        chord_press(ctx, c, (buttons & wbtn_bit[i]) != 0);
     }
+}
+
+/* stick direction -> key chord (kb/mouse): 8 cardinal dirs, edge-triggered.
+   LX-,LX+,LY-,LY+,RX-,RX+,RY-,RY+ ; a diagonal presses both keys. */
+static void kb_stick_keys(input_ctx_t *ctx, const settings_t *s,
+                          const wupstream_input_t *in) {
+    (void)s;
+    int dz = s->input.deadzone;
+    int inv = s->input.invert_y;
+    int v[8];
+    v[0] = in->lx < -dz;  v[1] = in->lx > dz;
+    v[2] = (inv ? -in->ly : in->ly) < -dz;  v[3] = (inv ? -in->ly : in->ly) > dz;
+    v[4] = in->rx < -dz;  v[5] = in->rx > dz;
+    v[6] = (inv ? -in->ry : in->ry) < -dz;  v[7] = (inv ? -in->ry : in->ry) > dz;
+    unsigned dirs = 0;
+    for (int i = 0; i < 8; i++) if (v[i]) dirs |= 1u << i;
+    unsigned diff = dirs ^ ctx->prev_stick_dirs;
+    for (int i = 0; i < 8; i++) {
+        if (!(diff & (1u << i))) continue;
+        const chord_t *c = &stick_chord[i];
+        if (c->key == NoSymbol) continue;
+        chord_press(ctx, c, (dirs & (1u << i)) != 0);
+    }
+    ctx->prev_stick_dirs = dirs;
 }
 
 /* Wii U gamepad gyro: s24 raw, ~+-2000 dps full scale -> ~4194 raw per dps */
@@ -219,18 +304,30 @@ static void kb_pointer(input_ctx_t *ctx, const settings_t *s, const wupstream_in
     const input_cfg_t *ic = &s->input;
     int dz = ic->deadzone;
 
-    /* touch -> mouse gestures (available in both modes):
-       - quick tap            : left click
-       - long press (>450 ms) : right click
-       - 2nd tap + move       : drag & drop (button held while moving)
-       - 3rd tap + move       : scroll (vertical, follows finger) */
-    const double TAP_WIN = 0.40, LONG_PRESS = 0.45;
+    /* touch maps onto the streamed area (monitor/window/region), not the
+       whole X desktop: px = map_x + tx * map_w / 853 */
+    int mx0 = 0, my0 = 0, mw = ctx->scr_w, mh = ctx->scr_h;
+    if (ctx->map_valid && ctx->map_w > 0 && ctx->map_h > 0) {
+        mx0 = ctx->map_x; my0 = ctx->map_y; mw = ctx->map_w; mh = ctx->map_h;
+    }
+#define TOUCH_PX(tx_) (mx0 + (int)((tx_) * (double)mw / 853.0))
+#define TOUCH_PY(ty_) (my0 + (int)((ty_) * (double)mh / 479.0))
+
+    /* touch -> mouse gestures (capacitive-touch spec values):
+       - tap (<500 ms, <12 px wander)      : left click on release
+       - move >12 px from anchor          : left drag (button goes down at
+         once -> drawing works, zero added latency)
+       - hold still >500 ms inside slop   : right click (held until release)
+       - 2nd tap within 300 ms            : drag & drop
+       - 3rd tap within 300 ms + move     : scroll (no pointer warp) */
+    const double TAP_WIN = 0.30, LONG_PRESS = 0.50, SLOP = 6.0;
     if (ic->touch_as_mouse && in->touched && !ctx->prev_touched) {
         /* finger down */
-        int px = in->tx * ctx->scr_w / 853;
-        int py = in->ty * ctx->scr_h / 479;
+        int px = TOUCH_PX(in->tx);
+        int py = TOUCH_PY(in->ty);
         xtest_warp(d, px, py);
         ctx->touch_px = px; ctx->touch_py = py;
+        ctx->touch_ax = in->tx; ctx->touch_ay = in->ty;
         double t = now_sec();
         ctx->touch_taps = (t - ctx->touch_last_up < TAP_WIN) ? ctx->touch_taps + 1 : 1;
         ctx->touch_t0 = t;
@@ -239,11 +336,10 @@ static void kb_pointer(input_ctx_t *ctx, const settings_t *s, const wupstream_in
         if (ctx->touch_taps >= 3) {
             ctx->touch_gesture = 2;              /* scroll mode */
             ctx->touch_taps = 0;
-        } else if (ctx->touch_taps == 2) {
-            ctx->touch_gesture = 1;              /* drag & drop */
-            xtest_button(d, 1, 1);
         }
-        /* taps == 1: undecided until release or long-press timeout */
+        /* taps == 2 stays undecided: released quickly -> normal click
+           (a real double-click); held + moved -> drag & drop; held
+           still -> right click. The button only goes down on slop exit. */
     } else if (ic->touch_as_mouse && !in->touched && ctx->prev_touched) {
         /* finger up */
         double held = now_sec() - ctx->touch_t0;
@@ -257,28 +353,48 @@ static void kb_pointer(input_ctx_t *ctx, const settings_t *s, const wupstream_in
             xtest_button(d, 1, 1);               /* tap = click */
             xtest_button(d, 1, 0);
         } else {
-            xtest_button(d, 3, 1);               /* long press = right click */
+            xtest_button(d, 3, 1);               /* fallback: long hold = right click */
             xtest_button(d, 3, 0);
         }
+        /* multi-tap counting only chains REAL taps: a drag, scroll or
+           long-press stroke resets the counter, so drawing several quick
+           strokes never degrades into scroll mode */
+        if (ctx->touch_gesture != 0 || held >= LONG_PRESS)
+            ctx->touch_taps = 0;
         ctx->touch_last_up = now_sec();
         ctx->touch_gesture = 0;
     } else if (ic->touch_as_mouse && in->touched) {
-        /* finger moving */
-        int px = in->tx * ctx->scr_w / 853;
-        int py = in->ty * ctx->scr_h / 479;
-        if (abs(px - ctx->touch_px) > 2 || abs(py - ctx->touch_py) > 2) {
-            xtest_warp(d, px, py);
-            ctx->touch_px = px; ctx->touch_py = py;
-        }
+        /* finger moving / held */
         double t = now_sec();
-        if (ctx->touch_gesture == 0 && t - ctx->touch_t0 > LONG_PRESS) {
-            ctx->touch_gesture = 3;              /* long press engaged */
-            xtest_button(d, 3, 1);
-        } else if (ctx->touch_gesture == 2) {
+        double ddx = in->tx - ctx->touch_ax, ddy = in->ty - ctx->touch_ay;
+        int past_slop = (ddx * ddx + ddy * ddy) > SLOP * SLOP;
+
+        if (ctx->touch_gesture == 2) {
+            /* scroll: vertical deltas, pointer stays put */
             int dy = in->ty - ctx->touch_ly;
-            while (dy > 24) { xtest_scroll(d, 5); dy -= 24; }
-            while (dy < -24) { xtest_scroll(d, 4); dy += 24; }
+            while (dy > 28) { xtest_scroll(d, 5); dy -= 28; }
+            while (dy < -28) { xtest_scroll(d, 4); dy += 28; }
             ctx->touch_ly = in->ty - dy;
+        } else {
+            /* every other gesture keeps the pointer under the finger */
+            int px = TOUCH_PX(in->tx);
+            int py = TOUCH_PY(in->ty);
+            if (abs(px - ctx->touch_px) > 2 || abs(py - ctx->touch_py) > 2) {
+                xtest_warp(d, px, py);
+                ctx->touch_px = px; ctx->touch_py = py;
+            }
+            if (ctx->touch_gesture == 0) {
+                if (past_slop) {
+                    /* real movement -> drag begins immediately (drawing!) */
+                    ctx->touch_gesture = 1;
+                    xtest_button(d, 1, 1);
+                } else if (t - ctx->touch_t0 > LONG_PRESS) {
+                    ctx->touch_gesture = 3;      /* still inside slop: right click */
+                    xtest_button(d, 3, 1);
+                }
+            }
+            /* gesture 1: left already held, warp tracks the finger.
+               gesture 3: right held until release. */
         }
     }
 
@@ -329,6 +445,12 @@ input_ctx_t *input_init(const settings_t *s) {
     else
         load_keysyms(&s->input);
     return ctx;
+}
+
+void input_set_touch_map(input_ctx_t *ctx, int x, int y, int w, int h) {
+    if (!ctx) return;
+    ctx->map_x = x; ctx->map_y = y; ctx->map_w = w; ctx->map_h = h;
+    ctx->map_valid = (w > 0 && h > 0);
 }
 
 void input_free(input_ctx_t *ctx) {
@@ -412,6 +534,7 @@ void input_dispatch(input_ctx_t *ctx, const settings_t *s, const wupstream_input
     } else if (ctx->dpy) {
         /* kb/mouse mode */
         kb_buttons(ctx, s, buttons);
+        kb_stick_keys(ctx, s, in);
         ctx->prev_buttons = buttons;
         ctx->prev_lx = scale_stick(in->lx, dz);
         ctx->prev_ly = scale_stick(in->ly, dz);

@@ -234,3 +234,12 @@ void capture_stop(capture_t *c) {
         c->dpy = NULL;
     }
 }
+
+/* root-window rect of what is currently streamed (for touch->mouse mapping) */
+void capture_target_rect(const capture_t *c, int *x, int *y, int *w, int *h) {
+    if (c->is_window) {
+        *x = c->last_x; *y = c->last_y; *w = c->last_w; *h = c->last_h;
+    } else {
+        *x = c->cap_x; *y = c->cap_y; *w = c->src_w; *h = c->src_h;
+    }
+}

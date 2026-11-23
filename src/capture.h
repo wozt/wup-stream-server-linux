@@ -36,4 +36,6 @@ int capture_start(capture_t *c, const settings_t *s);
 int capture_grab(capture_t *c, unsigned char *out);
 /* window sources: check geometry; restart internals if resized. <0 = window gone */
 int capture_follow(capture_t *c, const settings_t *s);
+/* root-window rect of the streamed area (touch->mouse mapping) */
+void capture_target_rect(const capture_t *c, int *x, int *y, int *w, int *h);
 void capture_stop(capture_t *c);

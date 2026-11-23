@@ -248,6 +248,17 @@ static void *server_thread(void *arg) {
                 cap_fails = 0;
             }
 
+            /* keep the touch->mouse map on the streamed area */
+            if (ictx) {
+                if (cap_ok) {
+                    int mx, my, mw, mh;
+                    capture_target_rect(&cap, &mx, &my, &mw, &mh);
+                    input_set_touch_map(ictx, mx, my, mw, mh);
+                } else {
+                    input_set_touch_map(ictx, 0, 0, 0, 0);
+                }
+            }
+
             /* inputs */
             if (wupstream_input(pad, &in) != 0) { lost = 1; break; }
             pthread_mutex_lock(&srv->mtx);

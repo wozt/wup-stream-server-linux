@@ -3,6 +3,8 @@
 #include "x11util.h"
 #include "select.h"
 #include "input.h"
+#include "server.h"
+#include "viz.h"
 #include <gtk/gtk.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -28,6 +30,7 @@ struct ui_t {
     GtkWidget *mode_combo, *dz_spin, *sens_spin, *invert_chk;
     GtkWidget *gyro_combo, *gyro_sens_spin, *touch_chk, *rstick_chk;
     GtkWidget *key_entries[18];
+    GtkWidget *cmd_combo;
     GtkWidget *stick_entries[8];
     GtkWidget *viz_area, *black_chk;
     /* audio */
@@ -400,6 +403,147 @@ static void on_gyro_changed(GtkComboBox *cb, ui_t *u) {
     commit_live(u);
 }
 
+
+static void on_key_edited(GtkEntry *e, ui_t *u);
+static void on_stick_key_edited(GtkEntry *e, ui_t *u);
+
+/* push settings.input.keys/stick_keys back into the entry widgets
+   (used when a command preset is applied) */
+static void refresh_key_entries(ui_t *u) {
+    for (int i = 0; i < 17; i++) {
+        if (!u->key_entries[i]) continue;
+        g_signal_handlers_block_by_func(u->key_entries[i], G_CALLBACK(on_key_edited), u);
+        gtk_entry_set_text(GTK_ENTRY(u->key_entries[i]), u->s->input.keys[i]);
+        g_signal_handlers_unblock_by_func(u->key_entries[i], G_CALLBACK(on_key_edited), u);
+    }
+    for (int i = 0; i < 8; i++) {
+        if (!u->stick_entries[i]) continue;
+        g_signal_handlers_block_by_func(u->stick_entries[i], G_CALLBACK(on_stick_key_edited), u);
+        gtk_entry_set_text(GTK_ENTRY(u->stick_entries[i]), u->s->input.stick_keys[i]);
+        g_signal_handlers_unblock_by_func(u->stick_entries[i], G_CALLBACK(on_stick_key_edited), u);
+    }
+}
+
+static void refresh_cmd_presets(ui_t *u) {
+    GtkComboBoxText *cb = GTK_COMBO_BOX_TEXT(u->cmd_combo);
+    gtk_combo_box_text_remove_all(cb);
+    gtk_combo_box_text_append_text(cb, "(custom)");
+    for (int i = 0; i < u->s->input.ncmd; i++)
+        gtk_combo_box_text_append_text(cb, u->s->input.cmd_presets[i].name);
+    int act = 0;
+    for (int i = 0; i < u->s->input.ncmd; i++)
+        if (!strcmp(u->s->input.cmd_presets[i].name, u->s->input.cmd_preset))
+            act = i + 1;
+    gtk_combo_box_set_active(GTK_COMBO_BOX(cb), act);
+}
+
+static void on_cmd_preset_changed(GtkComboBox *cb, ui_t *u) {
+    int idx = gtk_combo_box_get_active(cb);
+    if (idx <= 0 || idx - 1 >= u->s->input.ncmd) {
+        u->s->input.cmd_preset[0] = 0;
+        schedule_save(u);
+        return;
+    }
+    cmd_preset_t *cp = &u->s->input.cmd_presets[idx - 1];
+    snprintf(u->s->input.cmd_preset, sizeof u->s->input.cmd_preset, "%s", cp->name);
+    memcpy(u->s->input.keys, cp->keys, sizeof u->s->input.keys);
+    memcpy(u->s->input.stick_keys, cp->stick_keys, sizeof u->s->input.stick_keys);
+    refresh_key_entries(u);
+    server_apply_input_keys(u->srv);
+    schedule_save(u);
+}
+
+static void on_cmd_save(GtkButton *b, ui_t *u) {
+    (void)b;
+    GtkWidget *dlg = gtk_dialog_new_with_buttons("Save command preset",
+        GTK_WINDOW(gtk_widget_get_toplevel(GTK_WIDGET(u->cmd_combo))),
+        GTK_DIALOG_MODAL, "_Cancel", GTK_RESPONSE_CANCEL,
+        "_Save", GTK_RESPONSE_ACCEPT, NULL);
+    GtkWidget *content = gtk_dialog_get_content_area(GTK_DIALOG(dlg));
+    GtkWidget *lbl = gtk_label_new("Preset name (per-app keymap):");
+    GtkWidget *ent = gtk_entry_new();
+    gtk_entry_set_text(GTK_ENTRY(ent),
+        u->s->input.cmd_preset[0] ? u->s->input.cmd_preset : "Preset");
+    gtk_box_pack_start(GTK_BOX(content), lbl, FALSE, FALSE, 6);
+    gtk_box_pack_start(GTK_BOX(content), ent, FALSE, FALSE, 6);
+    gtk_widget_show_all(dlg);
+    if (gtk_dialog_run(GTK_DIALOG(dlg)) == GTK_RESPONSE_ACCEPT) {
+        const char *name = gtk_entry_get_text(GTK_ENTRY(ent));
+        if (name && name[0]) {
+            /* replace same-name or append */
+            int slot = -1;
+            for (int i = 0; i < u->s->input.ncmd; i++)
+                if (!strcmp(u->s->input.cmd_presets[i].name, name)) slot = i;
+            if (slot < 0) {
+                if (u->s->input.ncmd < 8) slot = u->s->input.ncmd++;
+            }
+            if (slot >= 0) {
+                cmd_preset_t *cp = &u->s->input.cmd_presets[slot];
+                snprintf(cp->name, sizeof cp->name, "%s", name);
+                memcpy(cp->keys, u->s->input.keys, sizeof cp->keys);
+                memcpy(cp->stick_keys, u->s->input.stick_keys, sizeof cp->stick_keys);
+                snprintf(u->s->input.cmd_preset, sizeof u->s->input.cmd_preset, "%s", name);
+                refresh_cmd_presets(u);
+                settings_save(u->s);
+            }
+        }
+    }
+    gtk_widget_destroy(dlg);
+}
+
+static void on_cmd_delete(GtkButton *b, ui_t *u) {
+    (void)b;
+    int idx = gtk_combo_box_get_active(GTK_COMBO_BOX(u->cmd_combo));
+    if (idx <= 0 || idx - 1 >= u->s->input.ncmd) return;
+    memmove(&u->s->input.cmd_presets[idx - 1], &u->s->input.cmd_presets[idx],
+            (u->s->input.ncmd - idx) * sizeof(cmd_preset_t));
+    u->s->input.ncmd--;
+    u->s->input.cmd_preset[0] = 0;
+    refresh_cmd_presets(u);
+    settings_save(u->s);
+}
+
+static void on_key_help(GtkButton *b, ui_t *u) {
+    (void)b; (void)u;
+    const char *txt =
+        "Key syntax for button/stick mappings:\n"
+        "\n"
+        "  a            single letter (case-insensitive)\n"
+        "  F1..F12      function keys\n"
+        "  Left Right Up Down   arrow keys\n"
+        "  Return Escape space Tab BackSpace Delete Insert\n"
+        "  Home End Page_Up Page_Down\n"
+        "  minus plus equal comma period slash backslash\n"
+        "  semicolon apostrophe bracketleft bracketright grave\n"
+        "\n"
+        "  Chords: modifiers + key, e.g.\n"
+        "    Ctrl+A          Control + A\n"
+        "    Alt+Ctrl+G      Alt + Control + G\n"
+        "    Shift+F5       Shift + F5\n"
+        "    Super+Return   Super/Win + Enter\n"
+        "\n"
+        "  Modifiers: Ctrl/Control, Alt, Shift, Super/Win/Meta\n"
+        "  (also Control_L, Alt_L, Shift_L, Super_L accepted)\n"
+        "  Empty field = unmapped.\n"
+        "\n"
+        "  Command presets save whole keymaps (buttons + stick dirs)\n"
+        "  as JSON in settings.json - one per app if you like.";
+    GtkWidget *dlg = gtk_dialog_new_with_buttons("Key mapping help",
+        GTK_WINDOW(gtk_widget_get_toplevel(GTK_WIDGET(u->cmd_combo))),
+        GTK_DIALOG_MODAL, "_Close", GTK_RESPONSE_CLOSE);
+    GtkWidget *content = gtk_dialog_get_content_area(GTK_DIALOG(dlg));
+    GtkWidget *sw = gtk_scrolled_window_new(NULL, NULL);
+    gtk_widget_set_size_request(sw, 420, 380);
+    GtkWidget *tv = gtk_text_view_new();
+    gtk_text_view_set_editable(GTK_TEXT_VIEW(tv), FALSE);
+    gtk_text_buffer_set_text(gtk_text_view_get_buffer(GTK_TEXT_VIEW(tv)), txt, -1);
+    gtk_container_add(GTK_CONTAINER(sw), tv);
+    gtk_container_add(GTK_CONTAINER(content), sw);
+    gtk_widget_show_all(dlg);
+    gtk_dialog_run(GTK_DIALOG(dlg));
+    gtk_widget_destroy(dlg);
+}
+
 /* button index -> icon file (data/icons), NULL = text label */
 static const char *btn_icon_files[18] = {
     "btn_a.png", "btn_b.png", "btn_x.png", "btn_y.png",
@@ -458,256 +602,6 @@ static void on_key_edited(GtkEntry *e, ui_t *u) {
         }
 }
 
-/* live pad visualization: logical 320x180 space scaled to fit the widget,
-   so nothing is ever clipped. Wii U layout: sticks bottom, dpad left,
-   ABXY right, shoulders top, attitude gauge + gyro top-right. */
-#define VW 320
-#define VH 180
-
-static void viz_circle(cairo_t *cr, double x, double y, double r,
-                       int on, double dim) {
-    cairo_set_source_rgba(cr, 1, 1, 1, on ? 0.9 : dim);
-    cairo_arc(cr, x, y, r, 0, 2 * G_PI);
-    cairo_fill_preserve(cr);
-    cairo_set_source_rgba(cr, 1, 1, 1, 0.7);
-    cairo_set_line_width(cr, 1.2);
-    cairo_stroke(cr);
-}
-
-static gboolean viz_draw(GtkWidget *w, cairo_t *cr, gpointer data) {
-    ui_t *u = data;
-    GtkAllocation al;
-    gtk_widget_get_allocation(w, &al);
-    wupstream_input_t in;
-    cairo_set_source_rgb(cr, 0.10, 0.11, 0.15);
-    cairo_paint(cr);
-
-    double sc = MIN((double)al.width / VW, (double)al.height / VH);
-    if (sc <= 0) return FALSE;
-    cairo_save(cr);
-    cairo_translate(cr, (al.width - VW * sc) / 2, (al.height - VH * sc) / 2);
-    cairo_scale(cr, sc, sc);
-    cairo_select_font_face(cr, "Sans", CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_NORMAL);
-
-    if (!server_input_snapshot(u->srv, &in)) {
-        cairo_set_source_rgb(cr, 0.5, 0.5, 0.55);
-        cairo_set_font_size(cr, 12);
-        cairo_move_to(cr, 12, VH / 2);
-        cairo_show_text(cr, "no pad data - start the stream");
-        cairo_restore(cr);
-        return FALSE;
-    }
-
-    /* ---- gamepad body silhouette ---- */
-    cairo_new_path(cr);
-    cairo_move_to(cr, 62, 10);
-    cairo_line_to(cr, 258, 10);
-    cairo_curve_to(cr, 298, 10, 312, 36, 312, 66);
-    cairo_line_to(cr, 312, 128);
-    cairo_curve_to(cr, 312, 162, 284, 174, 246, 174);
-    cairo_line_to(cr, 74, 174);
-    cairo_curve_to(cr, 36, 174, 8, 162, 8, 128);
-    cairo_line_to(cr, 8, 66);
-    cairo_curve_to(cr, 8, 36, 22, 10, 62, 10);
-    cairo_close_path(cr);
-    cairo_set_source_rgb(cr, 0.16, 0.17, 0.22);
-    cairo_fill_preserve(cr);
-    cairo_set_source_rgba(cr, 1, 1, 1, 0.35);
-    cairo_set_line_width(cr, 1.5);
-    cairo_stroke(cr);
-
-    /* screen hint: the pad's own display area, top center */
-    cairo_set_source_rgba(cr, 1, 1, 1, 0.05);
-    cairo_rectangle(cr, 96, 22, 128, 40);
-    cairo_fill(cr);
-    cairo_set_source_rgba(cr, 1, 1, 1, 0.18);
-    cairo_rectangle(cr, 96, 22, 128, 40);
-    cairo_set_line_width(cr, 1);
-    cairo_stroke(cr);
-
-    /* ---- shoulders along the top edge: ZL L | R ZR ---- */
-    {
-        struct { int bit; double x; const char *t; } sh[4] = {
-            { WUPSTREAM_ZL, 52, "ZL" }, { WUPSTREAM_L, 88, "L" },
-            { WUPSTREAM_R, 232, "R" },  { WUPSTREAM_ZR, 268, "ZR" }
-        };
-        for (int i = 0; i < 4; i++) {
-            int on = (in.buttons & sh[i].bit) != 0;
-            cairo_set_source_rgba(cr, 1, 1, 1, on ? 0.85 : 0.16);
-            cairo_rectangle(cr, sh[i].x - 15, 13, 30, 11);
-            cairo_fill_preserve(cr);
-            cairo_set_source_rgba(cr, 1, 1, 1, 0.5);
-            cairo_set_line_width(cr, 1);
-            cairo_stroke(cr);
-            cairo_set_source_rgb(cr, on ? 0.1 : 0.6, on ? 0.1 : 0.6, on ? 0.15 : 0.65);
-            cairo_set_font_size(cr, 7);
-            cairo_text_extents_t te;
-            cairo_text_extents(cr, sh[i].t, &te);
-            cairo_move_to(cr, sh[i].x - te.width / 2, 21.5);
-            cairo_show_text(cr, sh[i].t);
-        }
-    }
-
-    /* ---- sticks: L (66,120) R (168,132), r=22 ---- */
-    for (int st = 0; st < 2; st++) {
-        double bx = st ? 168 : 66, by = st ? 132 : 120;
-        int rx = st ? in.rx : in.lx, ry = st ? in.ry : in.ly;
-        cairo_set_source_rgba(cr, 0, 0, 0, 0.35);
-        cairo_arc(cr, bx, by, 23, 0, 2 * G_PI);
-        cairo_fill_preserve(cr);
-        cairo_set_source_rgba(cr, 1, 1, 1, 0.5);
-        cairo_set_line_width(cr, 1.4);
-        cairo_stroke(cr);
-        cairo_set_source_rgba(cr, 1, 1, 1, 0.18);
-        cairo_move_to(cr, bx - 22, by); cairo_line_to(cr, bx + 22, by);
-        cairo_move_to(cr, bx, by - 22); cairo_line_to(cr, bx, by + 22);
-        cairo_stroke(cr);
-        double px = bx + rx / 1100.0 * 20, py = by - ry / 1100.0 * 20;
-        cairo_set_source_rgb(cr, 0.25, 0.6, 0.95);
-        cairo_arc(cr, px, py, 6, 0, 2 * G_PI);
-        cairo_fill_preserve(cr);
-        cairo_set_source_rgb(cr, 0.1, 0.15, 0.25);
-        cairo_set_line_width(cr, 1);
-        cairo_stroke(cr);
-        int l3 = st ? (in.buttons & WUPSTREAM_R3) : (in.buttons & WUPSTREAM_L3);
-        cairo_set_source_rgb(cr, l3 ? 0.3 : 0.5, l3 ? 0.75 : 0.5, l3 ? 1.0 : 0.5);
-        cairo_arc(cr, bx, by - 30, 3, 0, 2 * G_PI);
-        cairo_fill(cr);
-        cairo_set_source_rgb(cr, 0.55, 0.55, 0.6);
-        cairo_set_font_size(cr, 8);
-        cairo_move_to(cr, bx - 12, by + 38);
-        cairo_show_text(cr, st ? "R" : "L");
-    }
-
-    /* ---- dpad cross at (120,58), arm 13 ---- */
-    {
-        double dx = 120, dy = 58, a = 13, w = 9;
-        cairo_set_source_rgba(cr, 1, 1, 1, 0.16);
-        cairo_rectangle(cr, dx - w / 2, dy - a, w, 2 * a);
-        cairo_rectangle(cr, dx - a, dy - w / 2, 2 * a, w);
-        cairo_fill_preserve(cr);
-        cairo_set_source_rgba(cr, 1, 1, 1, 0.55);
-        cairo_set_line_width(cr, 1.1);
-        cairo_stroke(cr);
-        struct { int bit; double ox, oy; } dp[4] = {
-            { WUPSTREAM_UP, 0, -1 }, { WUPSTREAM_DOWN, 0, 1 },
-            { WUPSTREAM_LEFT, -1, 0 }, { WUPSTREAM_RIGHT, 1, 0 }
-        };
-        for (int i = 0; i < 4; i++)
-            if (in.buttons & dp[i].bit) {
-                cairo_set_source_rgb(cr, 0.3, 0.75, 1.0);
-                cairo_arc(cr, dx + dp[i].ox * (a - 4), dy + dp[i].oy * (a - 4), 4, 0, 2 * G_PI);
-                cairo_fill(cr);
-            }
-    }
-
-    /* ---- face buttons diamond center (252,108), r=26, btn r=10 ---- */
-    {
-        struct { int bit; double ox, oy; const char *t; } fb[4] = {
-            { WUPSTREAM_X, 0, -1, "X" }, { WUPSTREAM_Y, -1, 0, "Y" },
-            { WUPSTREAM_A, 1, 0, "A" },  { WUPSTREAM_B, 0, 1, "B" }
-        };
-        double fx = 252, fy = 108;
-        for (int i = 0; i < 4; i++) {
-            double bx = fx + fb[i].ox * 26, by = fy + fb[i].oy * 26;
-            int on = (in.buttons & fb[i].bit) != 0;
-            viz_circle(cr, bx, by, 10.5, on, on ? 0.9 : 0.2);
-            cairo_set_source_rgb(cr, on ? 0.1 : 0.65, on ? 0.1 : 0.65, on ? 0.15 : 0.7);
-            cairo_set_font_size(cr, 9);
-            cairo_text_extents_t te;
-            cairo_text_extents(cr, fb[i].t, &te);
-            cairo_move_to(cr, bx - te.width / 2, by + te.height / 2);
-            cairo_show_text(cr, fb[i].t);
-        }
-    }
-
-    /* ---- center buttons: MINUS HOME PLUS + TV row at y=70, x~200-260 ---- */
-    {
-        struct { int bit; double x; const char *t; } sm[3] = {
-            { WUPSTREAM_MINUS, 196, "-" }, { WUPSTREAM_HOME, 214, "\xe2\x97\x8f" },
-            { WUPSTREAM_PLUS, 232, "+" }
-        };
-        for (int i = 0; i < 3; i++) {
-            int on = (in.buttons & sm[i].bit) != 0;
-            viz_circle(cr, sm[i].x, 70, 6.5, on, 0.2);
-            cairo_set_source_rgb(cr, on ? 0.1 : 0.7, on ? 0.1 : 0.7, on ? 0.15 : 0.75);
-            cairo_set_font_size(cr, 7);
-            cairo_text_extents_t te;
-            cairo_text_extents(cr, sm[i].t, &te);
-            cairo_move_to(cr, sm[i].x - te.width / 2, 72.5);
-            cairo_show_text(cr, sm[i].t);
-        }
-    }
-
-    /* ---- attitude indicator bottom-right inside body: (272,140) r=16 ---- */
-    {
-        double ax = in.accel[0] / 8200.0, ay = in.accel[1] / 8200.0,
-               az = in.accel[2] / 8200.0;
-        double roll = atan2(ax, az);
-        double pitch = atan2(-ay, sqrt(ax * ax + az * az));
-        double hx = 272, hy = 140, hr = 16;
-        cairo_save(cr);
-        cairo_arc(cr, hx, hy, hr, 0, 2 * G_PI);
-        cairo_clip(cr);
-        cairo_translate(cr, hx, hy);
-        cairo_rotate(cr, roll);
-        cairo_translate(cr, 0, pitch * hr * 0.8);
-        cairo_set_source_rgb(cr, 0.25, 0.45, 0.75);
-        cairo_rectangle(cr, -hr * 2, -hr * 3, hr * 4, hr * 3);
-        cairo_fill(cr);
-        cairo_set_source_rgb(cr, 0.55, 0.38, 0.2);
-        cairo_rectangle(cr, -hr * 2, 0, hr * 4, hr * 3);
-        cairo_fill(cr);
-        cairo_set_source_rgb(cr, 1, 1, 1);
-        cairo_set_line_width(cr, 1.2);
-        cairo_move_to(cr, -hr * 2, 0); cairo_line_to(cr, hr * 2, 0);
-        cairo_stroke(cr);
-        cairo_restore(cr);
-        cairo_set_source_rgba(cr, 1, 1, 1, 0.55);
-        cairo_arc(cr, hx, hy, hr, 0, 2 * G_PI);
-        cairo_set_line_width(cr, 1.2);
-        cairo_stroke(cr);
-        cairo_set_source_rgb(cr, 1, 1, 1);
-        cairo_set_line_width(cr, 1.5);
-        cairo_move_to(cr, hx - 7, hy); cairo_line_to(cr, hx + 7, hy);
-        cairo_move_to(cr, hx, hy - 3.5); cairo_line_to(cr, hx, hy + 3.5);
-        cairo_stroke(cr);
-
-        /* gyro dps bars under the gauge */
-        cairo_set_source_rgb(cr, 0.55, 0.55, 0.6);
-        cairo_set_font_size(cr, 7);
-        cairo_move_to(cr, 226, 162);
-        cairo_show_text(cr, "gyro");
-        for (int i = 0; i < 3; i++) {
-            double gx = in.gyro[i] / 4194.0;
-            double v = gx / 1000.0; if (v > 1) v = 1; if (v < -1) v = -1;
-            double bx = 226 + i * 22;
-            cairo_set_source_rgba(cr, 1, 1, 1, 0.2);
-            cairo_rectangle(cr, bx, 165, 18, 4);
-            cairo_fill(cr);
-            cairo_set_source_rgb(cr, 0.3, 0.75, 1.0);
-            double ww = 9 * v;
-            cairo_rectangle(cr, bx + 9 + (ww < 0 ? ww : 0), 165,
-                            ww < 0 ? -ww : ww, 4);
-            cairo_fill(cr);
-        }
-    }
-
-    /* ---- touch point overlay (pad screen coords mapped onto the body) ---- */
-    if (in.touched) {
-        cairo_set_source_rgb(cr, 1, 0.6, 0.2);
-        cairo_arc(cr, 30 + in.tx * (VW - 60) / 853.0,
-                       20 + in.ty * (VH - 40) / 479.0, 6, 0, 2 * G_PI);
-        cairo_fill_preserve(cr);
-        cairo_set_source_rgb(cr, 1, 1, 1);
-        cairo_set_line_width(cr, 1.5);
-        cairo_stroke(cr);
-    }
-
-    cairo_restore(cr);
-    return FALSE;
-}
-
 static GtkWidget *build_input_section(ui_t *u) {
     GtkWidget *sec = mk_section("Inputs");
 
@@ -742,9 +636,7 @@ static GtkWidget *build_input_section(ui_t *u) {
         gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(u->invert_chk), u->s->input.invert_y);
         g_signal_connect(u->invert_chk, "toggled", G_CALLBACK(on_input_toggled), u);
         gtk_box_pack_start(GTK_BOX(gp), u->invert_chk, FALSE, FALSE, 0);
-        u->viz_area = gtk_drawing_area_new();
-        gtk_widget_set_size_request(u->viz_area, 320, 175);
-        g_signal_connect(u->viz_area, "draw", G_CALLBACK(viz_draw), u);
+        u->viz_area = pad_viz_new();
         gtk_box_pack_start(GTK_BOX(gp), u->viz_area, FALSE, FALSE, 0);
         gtk_box_pack_start(GTK_BOX(gp),
             mk_label("Live pad state (buttons, sticks, gyro)"),
@@ -759,7 +651,29 @@ static GtkWidget *build_input_section(ui_t *u) {
         gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(u->rstick_chk), u->s->input.right_stick_mouse);
         g_signal_connect(u->rstick_chk, "toggled", G_CALLBACK(on_input_toggled), u);
         gtk_box_pack_start(GTK_BOX(kb), u->rstick_chk, FALSE, FALSE, 0);
-        gtk_box_pack_start(GTK_BOX(kb), mk_label("Button -> key mapping:"), FALSE, FALSE, 0);
+        /* command presets row: combo + save + delete + help */
+        {
+            GtkWidget *prow = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 4);
+            gtk_box_pack_start(GTK_BOX(kb), prow, FALSE, FALSE, 0);
+            gtk_box_pack_start(GTK_BOX(prow), mk_label("Preset:"), FALSE, FALSE, 0);
+            u->cmd_combo = gtk_combo_box_text_new();
+            gtk_widget_set_hexpand(u->cmd_combo, TRUE);
+            refresh_cmd_presets(u);
+            g_signal_connect(u->cmd_combo, "changed", G_CALLBACK(on_cmd_preset_changed), u);
+            gtk_box_pack_start(GTK_BOX(prow), u->cmd_combo, TRUE, TRUE, 0);
+            GtkWidget *hb = gtk_button_new_with_label("?");
+            gtk_widget_set_tooltip_text(hb, "Key syntax help");
+            g_signal_connect(hb, "clicked", G_CALLBACK(on_key_help), u);
+            gtk_box_pack_start(GTK_BOX(prow), hb, FALSE, FALSE, 0);
+            GtkWidget *sv = gtk_button_new_with_label("Save");
+            gtk_widget_set_tooltip_text(sv, "Save current mapping as a named preset");
+            g_signal_connect(sv, "clicked", G_CALLBACK(on_cmd_save), u);
+            gtk_box_pack_start(GTK_BOX(prow), sv, FALSE, FALSE, 0);
+            GtkWidget *dl = gtk_button_new_with_label("Del");
+            g_signal_connect(dl, "clicked", G_CALLBACK(on_cmd_delete), u);
+            gtk_box_pack_start(GTK_BOX(prow), dl, FALSE, FALSE, 0);
+        }
+        gtk_box_pack_start(GTK_BOX(kb), mk_label("Button -> key (chords ok: Ctrl+A):"), FALSE, FALSE, 0);
         GtkWidget *kmid = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
         gtk_box_pack_start(GTK_BOX(kb), kmid, FALSE, FALSE, 0);
         GtkWidget *kgrid = gtk_grid_new();
@@ -770,7 +684,7 @@ static GtkWidget *build_input_section(ui_t *u) {
             gtk_grid_attach(GTK_GRID(kgrid), btn_icon_widget(i), col, row, 1, 1);
             u->key_entries[i] = gtk_entry_new();
             gtk_entry_set_text(GTK_ENTRY(u->key_entries[i]), u->s->input.keys[i]);
-            gtk_entry_set_width_chars(GTK_ENTRY(u->key_entries[i]), 8);
+            gtk_entry_set_width_chars(GTK_ENTRY(u->key_entries[i]), 12);
             g_signal_connect(u->key_entries[i], "changed", G_CALLBACK(on_key_edited), u);
             gtk_grid_attach(GTK_GRID(kgrid), u->key_entries[i], col + 1, row, 1, 1);
         }
@@ -786,7 +700,7 @@ static GtkWidget *build_input_section(ui_t *u) {
             gtk_grid_attach(GTK_GRID(sgrid), mk_label(stick_dir_names[i]), 0, i, 1, 1);
             u->stick_entries[i] = gtk_entry_new();
             gtk_entry_set_text(GTK_ENTRY(u->stick_entries[i]), u->s->input.stick_keys[i]);
-            gtk_entry_set_width_chars(GTK_ENTRY(u->stick_entries[i]), 6);
+            gtk_entry_set_width_chars(GTK_ENTRY(u->stick_entries[i]), 10);
             g_signal_connect(u->stick_entries[i], "changed", G_CALLBACK(on_stick_key_edited), u);
             gtk_grid_attach(GTK_GRID(sgrid), u->stick_entries[i], 1, i, 1, 1);
         }
@@ -1059,7 +973,11 @@ static gboolean status_tick(gpointer p) {
 
 static gboolean viz_tick(gpointer p) {
     ui_t *u = p;
-    if (u->viz_area) gtk_widget_queue_draw(u->viz_area);
+    if (u->viz_area) {
+        wupstream_input_t in;
+        pad_viz_feed(u->viz_area,
+                     server_input_snapshot(u->srv, &in) ? &in : NULL);
+    }
     return G_SOURCE_CONTINUE;
 }
 
