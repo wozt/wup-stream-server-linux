@@ -128,7 +128,6 @@ int list_windows(winfo_t *out, int max) {
     }
     Atom nameprop = xatom(d, "_NET_WM_NAME");
     Atom wmname = xatom(d, "WM_NAME");
-    Atom cls = xatom(d, "WM_CLASS");
     for (unsigned long i = 0; i < n && count < max; i++) {
         Window w = data[i];
         /* skip unmapped */

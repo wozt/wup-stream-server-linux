@@ -7,7 +7,7 @@ typedef struct server_t server_t;
 /* Once-per-second sampling, no lock or UI callback per frame. "Frame call"
  * includes libwupstream pacing; it is not end-to-end Wi-Fi latency. */
 typedef struct {
-    double fps, capture_ms, frame_call_ms;
+    double fps, fresh_fps, capture_ms, x11_ms, scale_ms, frame_call_ms;
     unsigned int capture_errors;
     int valid;
 } server_metrics_t;

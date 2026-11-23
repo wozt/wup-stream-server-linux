@@ -27,6 +27,7 @@ typedef struct {
     int tmp_w, tmp_h;
     int out_x, out_y, out_w, out_h; /* placement inside 854x480 */
     int aspect;
+    double last_x11_ms, last_scale_ms; /* V9.12 diagnostic timings */
     /* window follow */
     int last_w, last_h, last_x, last_y;
 } capture_t;

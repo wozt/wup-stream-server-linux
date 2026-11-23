@@ -589,7 +589,7 @@ static void refresh_screens(ui_t *u) {
     gtk_combo_box_text_remove_all(cb);
     for (int i = 0; i < n; i++) {
         char label[160];
-        snprintf(label, sizeof label, "%s — %dx%d @%d,%d%s", buf[i].name,
+        snprintf(label, sizeof label, "%.63s — %dx%d @%d,%d%s", buf[i].name,
                  buf[i].w, buf[i].h, buf[i].x, buf[i].y,
                  buf[i].primary ? " (primary)" : "");
         gtk_combo_box_text_append(cb, buf[i].name, label);
@@ -1798,10 +1798,10 @@ static GtkWidget *build_conn_section(ui_t *u) {
      * are performed by the frame pipeline for UI updates. */
     u->stats_lbl = gtk_label_new("FPS --  |  Cap -- ms  |  Frame -- ms");
     gtk_label_set_xalign(GTK_LABEL(u->stats_lbl), 0);
-    gtk_label_set_max_width_chars(GTK_LABEL(u->stats_lbl), 44);
+    gtk_label_set_max_width_chars(GTK_LABEL(u->stats_lbl), 57);
     gtk_label_set_ellipsize(GTK_LABEL(u->stats_lbl), PANGO_ELLIPSIZE_END);
     gtk_widget_set_tooltip_text(u->stats_lbl,
-        "Frame call includes libwupstream pacing. End-to-end latency and network bitrate require GamePad/libwupstream telemetry.");
+        "FPS = encoder calls/s; new = distinct capture frames/s. X11 and Scale split the capture cost. Frame includes pacing, not end-to-end latency.");
     gtk_box_pack_start(GTK_BOX(sec), u->stats_lbl, FALSE, FALSE, 0);
     return frame_of(sec);
 }
@@ -2121,8 +2121,10 @@ void ui_refresh_status(ui_t *u) {
         char metrics_text[180];
         if (m.valid && st == SRV_STREAMING)
             snprintf(metrics_text, sizeof metrics_text,
-                "FPS %.1f  |  Cap %.1fms  |  Frame %.1fms  |  Err %u",
-                m.fps, m.capture_ms, m.frame_call_ms, m.capture_errors);
+                "FPS %.1f / new %.1f | Cap %.1fms | Err %u\n"
+                "X11 %.1fms | Scale %.1fms | Frame %.1fms",
+                m.fps, m.fresh_fps, m.capture_ms, m.capture_errors,
+                m.x11_ms, m.scale_ms, m.frame_call_ms);
         else
             snprintf(metrics_text, sizeof metrics_text,
                      "FPS --  |  Cap -- ms  |  Frame -- ms");

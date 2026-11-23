@@ -1,6 +1,7 @@
 #define _DEFAULT_SOURCE
 #include "server.h"
 #include "capture.h"
+#include "capture_async.h" /* WUP_V912_CAPTURE_OPTIMIZATION */
 #include "audio.h"
 #include "input.h"
 #include "x11util.h"
@@ -124,7 +125,9 @@ static void cycle_monitor(server_t *srv, settings_t *s) {
     for (int i = 0; i < n; i++)
         if (!strcmp(screens[i].name, s->source.output)) { cur = i; break; }
     int nxt = (cur + 1) % n;
-    snprintf(s->source.output, sizeof s->source.output, "%s", screens[nxt].name);
+    /* Fixed-size XRandR output name, never read beyond its 64-byte array. */
+    memcpy(s->source.output, screens[nxt].name, sizeof s->source.output);
+    s->source.output[sizeof s->source.output - 1] = '\0';
     pthread_mutex_lock(&srv->mtx);
     srv->restart_capture = 1;
     snprintf(srv->staged_settings.source.output,
@@ -191,6 +194,10 @@ static void *server_thread(void *arg) {
         audio_in_t ain;
         input_ctx_t *ictx = NULL;
         int have_aout = 0, have_ain = 0, cap_ok = 0, cap_fails = 0;
+        /* Set WUP_CAPTURE_ASYNC=0 to compare against the original serial path. */
+        const char *async_arg = getenv("WUP_CAPTURE_ASYNC");
+        const int async_enabled = !async_arg || strcmp(async_arg, "0") != 0;
+        capture_async_t *cap_async = NULL;
 
         int static_ok = 0;
         if (s->gamepad_only) {
@@ -206,6 +213,12 @@ static void *server_thread(void *arg) {
             wupstream_close(pad);
             usleep(5000000);
             continue;
+        }
+
+        if (cap_ok && async_enabled) {
+            cap_async = capture_async_start(&cap);
+            if (!cap_async)
+                set_status(srv, "async capture unavailable; using synchronous capture");
         }
 
         if (s->audio_pc_to_pad && !s->gamepad_only && audio_out_start(&aout, s->audio_monitor) == 0)
@@ -225,8 +238,9 @@ static void *server_thread(void *arg) {
         uint32_t prev_btns = 0;
         int lost = 0;
         double sample_since = v98_clock();
-        unsigned int sample_frames = 0, sample_capture_count = 0;
+        unsigned int sample_frames = 0, sample_fresh = 0, sample_capture_count = 0;
         double sample_capture_ms = 0.0, sample_frame_ms = 0.0;
+        double sample_x11_ms = 0.0, sample_scale_ms = 0.0;
         unsigned int capture_errors = 0;
         pthread_mutex_lock(&srv->mtx);
         memset(&srv->metrics, 0, sizeof srv->metrics);
@@ -246,6 +260,7 @@ static void *server_thread(void *arg) {
             if (rc) break;
             if (rst) {
                 cap_fails = 0;
+                if (cap_async) { capture_async_free(cap_async); cap_async = NULL; }
                 capture_stop(&cap);
                 /* An intentionally cleared region does not call XGetImage
                  * or retry capture. Video switches to black immediately. */
@@ -253,13 +268,22 @@ static void *server_thread(void *arg) {
                          (capture_start(&cap, s) == 0);
                 if (!cap_ok && !s->gamepad_only && !region_is_cleared(s))
                     cap_fails = 1;
+                if (cap_ok && async_enabled)
+                    cap_async = capture_async_start(&cap);
             }
             if (rlk && ictx) input_reload_keys(ictx, s);
             if (cg && ictx) { input_calib_start(ictx); set_status(srv, "gyro calibration: keep the pad flat and still..."); }
 
+            /* Main thread only reads borrowed frames from the capture worker.
+             * No additional frame memcpy is performed before the encoder. */
+            const unsigned char *frame_pixels = frame;
+            int map_x = 0, map_y = 0, map_w = 0, map_h = 0;
             /* gamepad-only mode: static test frame, no capture at all */
             if (s->gamepad_only) {
-                if (cap_ok) { capture_stop(&cap); cap_ok = 0; }
+                if (cap_ok) {
+                    if (cap_async) { capture_async_free(cap_async); cap_async = NULL; }
+                    capture_stop(&cap); cap_ok = 0;
+                }
                 if (!static_ok) {
                     if (s->gamepad_only_black) memset(frame, 0, FW * FH * 4);
                     else build_test_frame(frame);
@@ -268,7 +292,10 @@ static void *server_thread(void *arg) {
             } else if (region_is_cleared(s)) {
                 /* Live fallback: still transmit frames, audio and inputs.
                  * Never count this as a failed capture or drop the pad. */
-                if (cap_ok) { capture_stop(&cap); cap_ok = 0; }
+                if (cap_ok) {
+                    if (cap_async) { capture_async_free(cap_async); cap_async = NULL; }
+                    capture_stop(&cap); cap_ok = 0;
+                }
                 memset(frame, 0, FW * FH * 4);
                 static_ok = 0;
                 cap_fails = 0;
@@ -280,11 +307,27 @@ static void *server_thread(void *arg) {
                     set_status(srv, "capture failing, restarting (%d/%d)...", cap_fails, CAP_MAX_FAILS);
                     usleep(400000);
                     cap_ok = (capture_start(&cap, s) == 0);
+                    if (cap_ok && async_enabled)
+                        cap_async = capture_async_start(&cap);
                     continue;
                 }
 
-                /* follow window size every ~30 frames */
-                if ((frame_count++ % 30) == 0 && s->source_type == SRC_WINDOW) {
+                if (cap_async && capture_async_failed(cap_async)) {
+                    capture_async_sample_t taken;
+                    capture_async_sample(cap_async, &taken);
+                    capture_errors += taken.errors;
+                    sample_capture_count += taken.frames;
+                    sample_capture_ms += taken.total_ms;
+                    sample_x11_ms += taken.x11_ms;
+                    sample_scale_ms += taken.scale_ms;
+                    capture_async_free(cap_async); cap_async = NULL;
+                    capture_stop(&cap); cap_ok = 0;
+                    cap_fails = 1;
+                    continue;
+                }
+                /* Only the synchronous path touches the capture object here. */
+                if (!cap_async && (frame_count % 30) == 0 &&
+                    s->source_type == SRC_WINDOW) {
                     int fr = capture_follow(&cap, s);
                     if (fr < 0) {
                         /* window gone or unreadable: mark capture dead */
@@ -294,27 +337,41 @@ static void *server_thread(void *arg) {
                     }
                 }
 
-                double capture_beg = v98_clock();
-                if (capture_grab(&cap, frame) != 0) {
-                    capture_errors++;
-                    /* capture died: restart it, don't drop the pad */
-                    capture_stop(&cap);
-                    cap_ok = 0; cap_fails++;
-                    if (cap_fails > CAP_MAX_FAILS) { lost = 1; break; }
-                    set_status(srv, "capture lost, restarting (%d/%d)...", cap_fails, CAP_MAX_FAILS);
-                    continue;
+                if (cap_async) {
+                    int fresh = 0;
+                    frame_pixels = capture_async_latest(cap_async, &fresh,
+                                   &map_x, &map_y, &map_w, &map_h);
+                    if (!frame_pixels) {
+                        /* Initial frame: worker is still capturing. */
+                        usleep(1000);
+                        continue;
+                    }
+                    if (fresh) sample_fresh++;
+                } else {
+                    double capture_beg = v98_clock();
+                    if (capture_grab(&cap, frame) != 0) {
+                        capture_errors++;
+                        /* capture died: restart it, don't drop the pad */
+                        capture_stop(&cap);
+                        cap_ok = 0; cap_fails++;
+                        if (cap_fails > CAP_MAX_FAILS) { lost = 1; break; }
+                        set_status(srv, "capture lost, restarting (%d/%d)...", cap_fails, CAP_MAX_FAILS);
+                        continue;
+                    }
+                    sample_capture_ms += (v98_clock() - capture_beg) * 1000.0;
+                    sample_x11_ms += cap.last_x11_ms;
+                    sample_scale_ms += cap.last_scale_ms;
+                    sample_capture_count++;
+                    sample_fresh++;
+                    capture_target_rect(&cap, &map_x, &map_y, &map_w, &map_h);
                 }
-                sample_capture_ms += (v98_clock() - capture_beg) * 1000.0;
-                sample_capture_count++;
                 cap_fails = 0;
             }
 
             /* keep the touch->mouse map on the streamed area */
             if (ictx) {
                 if (cap_ok) {
-                    int mx, my, mw, mh;
-                    capture_target_rect(&cap, &mx, &my, &mw, &mh);
-                    input_set_touch_map(ictx, mx, my, mw, mh);
+                    input_set_touch_map(ictx, map_x, map_y, map_w, map_h);
                 } else {
                     input_set_touch_map(ictx, 0, 0, 0, 0);
                 }
@@ -350,17 +407,30 @@ static void *server_thread(void *arg) {
 
             /* canonical loop order: input -> frame -> audio */
             double frame_beg = v98_clock();
-            if (wupstream_frame(pad, frame, FW * 4, WUPSTREAM_BGRA) != 0) {
+            if (wupstream_frame(pad, frame_pixels, FW * 4, WUPSTREAM_BGRA) != 0) {
                 lost = 1; break;
             }
             double frame_end = v98_clock();
             sample_frame_ms += (frame_end - frame_beg) * 1000.0;
             sample_frames++;
+            frame_count++; /* debug/follow cadence applies to every source kind */
             double elapsed = frame_end - sample_since;
             if (elapsed >= 1.0) {
+                if (cap_async) {
+                    capture_async_sample_t taken;
+                    capture_async_sample(cap_async, &taken);
+                    sample_capture_count += taken.frames;
+                    sample_capture_ms += taken.total_ms;
+                    sample_x11_ms += taken.x11_ms;
+                    sample_scale_ms += taken.scale_ms;
+                    capture_errors += taken.errors;
+                }
                 server_metrics_t m = {
                     .fps = sample_frames / elapsed,
+                    .fresh_fps = (!cap_ok ? sample_frames : sample_fresh / elapsed),
                     .capture_ms = sample_capture_count ? sample_capture_ms / sample_capture_count : 0.0,
+                    .x11_ms = sample_capture_count ? sample_x11_ms / sample_capture_count : 0.0,
+                    .scale_ms = sample_capture_count ? sample_scale_ms / sample_capture_count : 0.0,
                     .frame_call_ms = sample_frames ? sample_frame_ms / sample_frames : 0.0,
                     .capture_errors = capture_errors,
                     .valid = 1
@@ -368,8 +438,8 @@ static void *server_thread(void *arg) {
                 pthread_mutex_lock(&srv->mtx);
                 srv->metrics = m;
                 pthread_mutex_unlock(&srv->mtx);
-                sample_frames = sample_capture_count = 0;
-                sample_capture_ms = sample_frame_ms = 0.0;
+                sample_frames = sample_fresh = sample_capture_count = 0;
+                sample_capture_ms = sample_x11_ms = sample_scale_ms = sample_frame_ms = 0.0;
                 sample_since = frame_end;
             }
 
@@ -400,6 +470,7 @@ static void *server_thread(void *arg) {
         pthread_mutex_lock(&srv->mtx);
         memset(&srv->metrics, 0, sizeof srv->metrics);
         pthread_mutex_unlock(&srv->mtx);
+        if (cap_async) { capture_async_free(cap_async); cap_async = NULL; }
         capture_stop(&cap);
         if (have_aout) audio_out_stop(&aout);
         if (have_ain) audio_in_stop(&ain);

@@ -5,6 +5,9 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <time.h>
+#include <stdint.h>
+#include <limits.h>
 #include <sys/ipc.h>
 #include <sys/shm.h>
 #include <xcb/shm.h>
@@ -14,6 +17,13 @@
 
 #define FW 854
 #define FH 480
+
+/* WUP_V912_CAPTURE_OPTIMIZATION: monotonic stages, per successful grab. */
+static double capture_seconds(void) {
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (double)ts.tv_sec + (double)ts.tv_nsec / 1e9;
+}
 
 /* ---------- aspect geometry ---------- */
 
@@ -53,7 +63,8 @@ static void shm_cleanup(capture_t *c) {
 
 static int setup_image(capture_t *c) {
     int w = c->src_w, h = c->src_h;
-    if (w <= 0 || h <= 0) return -1;
+    if (w <= 0 || h <= 0 || w > INT_MAX / 4 ||
+        (size_t)w > (SIZE_MAX - 4096) / 4 / (size_t)h) return -1;
     c->use_shm = 0;
     c->shmaddr = NULL; c->shmid = -1; c->shmseg = 0;
 
@@ -111,7 +122,12 @@ static int setup_scaler(capture_t *c) {
                             tw, th, AV_PIX_FMT_BGR0,
                             SWS_FAST_BILINEAR, NULL, NULL, NULL);
     if (!c->sws) return -1;
-    c->tmp = malloc((size_t)tw * th * 4);
+    /* The normal path scales directly into the final 854x480 BGRA frame.
+     * An intermediate image is needed ONLY for center crop. */
+    if (c->aspect != ASPECT_CROP) return 0;
+    if (tw <= 0 || th <= 0 || (size_t)tw > SIZE_MAX / 4 / (size_t)th)
+        return -1;
+    c->tmp = malloc((size_t)tw * (size_t)th * 4);
     return c->tmp ? 0 : -1;
 }
 
@@ -160,6 +176,7 @@ int capture_grab(capture_t *c, unsigned char *out) {
     const uint8_t *src_data;
     int src_stride;
     XImage *tmp_img = NULL;
+    double x11_beg = capture_seconds();
 
     if (c->use_shm) {
         /* XCB MIT-SHM get_image: pixels land directly in our shm segment */
@@ -184,28 +201,30 @@ int capture_grab(capture_t *c, unsigned char *out) {
         src_stride = tmp_img->bytes_per_line;
     }
 
+    c->last_x11_ms = (capture_seconds() - x11_beg) * 1000.0;
+    double scale_beg = capture_seconds();
     uint8_t *src_planes[4] = { (uint8_t *)src_data, NULL, NULL, NULL };
     int src_strides[4] = { src_stride, 0, 0, 0 };
-    uint8_t *dst_planes[4] = { c->tmp, NULL, NULL, NULL };
-    int dst_strides[4] = { c->tmp_w * 4, 0, 0, 0 };
-    sws_scale(c->sws, (const uint8_t *const *)src_planes, src_strides, 0, c->src_h,
-              dst_planes, dst_strides);
-
+    /* sws_scale supports destination row pitch; direct output avoids
+     * copying every 854x480 row from an intermediate image. */
+    if (c->aspect == ASPECT_LETTERBOX)
+        memset(out, 0, (size_t)FW * FH * 4);
+    uint8_t *dst = c->aspect == ASPECT_CROP ? c->tmp :
+                   out + ((size_t)c->out_y * FW + c->out_x) * 4;
+    uint8_t *dst_planes[4] = { dst, NULL, NULL, NULL };
+    int dst_strides[4] = { (c->aspect == ASPECT_CROP ? c->tmp_w : FW) * 4, 0, 0, 0 };
+    int scaled = sws_scale(c->sws, (const uint8_t *const *)src_planes, src_strides,
+                           0, c->src_h, dst_planes, dst_strides);
     if (tmp_img) XDestroyImage(tmp_img);
-
-    memset(out, 0, FW * FH * 4);
+    if (scaled != c->tmp_h) return -1;
     if (c->aspect == ASPECT_CROP) {
         int sx = (c->tmp_w - FW) / 2, sy = (c->tmp_h - FH) / 2;
         for (int y = 0; y < FH; y++)
             memcpy(out + (size_t)y * FW * 4,
                    c->tmp + ((size_t)(sy + y) * c->tmp_w + sx) * 4,
                    (size_t)FW * 4);
-    } else {
-        for (int y = 0; y < c->out_h; y++)
-            memcpy(out + ((size_t)(c->out_y + y) * FW + c->out_x) * 4,
-                   c->tmp + (size_t)y * c->tmp_w * 4,
-                   (size_t)c->out_w * 4);
     }
+    c->last_scale_ms = (capture_seconds() - scale_beg) * 1000.0;
     return 0;
 }
 

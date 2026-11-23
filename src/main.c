@@ -52,8 +52,9 @@ int main(int argc, char **argv) {
 
     int lockfd = acquire_instance_lock();
     if (lockfd < 0) {
+        /* GSpawn is not a shell: redirection text was passed as arguments. */
         g_spawn_command_line_async(
-            "notify-send 'wupstreamd' 'Already running' 2>/dev/null", NULL);
+            "notify-send 'wupstreamd' 'Already running'", NULL);
         return 0;
     }
 
