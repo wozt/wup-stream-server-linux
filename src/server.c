@@ -7,6 +7,7 @@
 #include "wupstream.h"
 #include <cairo/cairo.h>
 #include <pthread.h>
+#include <stdatomic.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -23,9 +24,18 @@
 struct server_t {
     settings_t *s;
     pthread_t th;
-    int running;
-    int want_stream;
-    int state;
+    atomic_int running;
+    atomic_int want_stream;
+    atomic_int state;
+    /* Only the GTK thread mutates shared settings; it publishes complete
+     * snapshots here. Stream thread reads only its private local copy. */
+    settings_t staged_settings;
+    unsigned long settings_generation;
+    /* Server-side TV/gyro changes must survive a subsequent GTK update. */
+    char last_ui_monitor[64];
+    double last_ui_gyro_bias[3];
+    int monitor_dirty, gyro_dirty;
+    server_metrics_t metrics;
     int restart_capture;
     int reload_keys;
     int reconnect;
@@ -46,10 +56,13 @@ static void set_status(server_t *srv, const char *fmt, ...) {
 }
 
 static int get_state(server_t *srv) {
-    pthread_mutex_lock(&srv->mtx);
-    int st = srv->state;
-    pthread_mutex_unlock(&srv->mtx);
-    return st;
+    return atomic_load_explicit(&srv->state, memory_order_relaxed);
+}
+
+static double v98_clock(void) {
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (double)ts.tv_sec + (double)ts.tv_nsec / 1e9;
 }
 
 static void apply_quality_env(const settings_t *s) {
@@ -114,6 +127,9 @@ static void cycle_monitor(server_t *srv, settings_t *s) {
     snprintf(s->source.output, sizeof s->source.output, "%s", screens[nxt].name);
     pthread_mutex_lock(&srv->mtx);
     srv->restart_capture = 1;
+    snprintf(srv->staged_settings.source.output,
+             sizeof srv->staged_settings.source.output, "%s", s->source.output);
+    srv->monitor_dirty = 1;
     pthread_mutex_unlock(&srv->mtx);
     settings_save(s);
     set_status(srv, "monitor: %s", screens[nxt].name);
@@ -138,12 +154,19 @@ static int capture_start_retry(capture_t *cap, const settings_t *s, server_t *sr
 
 static void *server_thread(void *arg) {
     server_t *srv = arg;
-    settings_t *s = srv->s;
+    settings_t active_settings;
+    settings_t *s = &active_settings;
+    unsigned long seen_generation = 0;
     static unsigned char frame[FW * FH * 4];
     static int16_t audio_buf[2048 * 2];
     static int16_t mic_buf[2048];
 
     while (srv->running) {
+        /* Refresh once per session. No reading the UI-owned settings here. */
+        pthread_mutex_lock(&srv->mtx);
+        active_settings = srv->staged_settings;
+        seen_generation = srv->settings_generation;
+        pthread_mutex_unlock(&srv->mtx);
         if (!srv->want_stream) {
             set_status(srv, "idle");
             srv->state = SRV_IDLE;
@@ -201,11 +224,24 @@ static void *server_thread(void *arg) {
         wupstream_input_t in;
         uint32_t prev_btns = 0;
         int lost = 0;
+        double sample_since = v98_clock();
+        unsigned int sample_frames = 0, sample_capture_count = 0;
+        double sample_capture_ms = 0.0, sample_frame_ms = 0.0;
+        unsigned int capture_errors = 0;
+        pthread_mutex_lock(&srv->mtx);
+        memset(&srv->metrics, 0, sizeof srv->metrics);
+        pthread_mutex_unlock(&srv->mtx);
 
         while (srv->running && srv->want_stream) {
             pthread_mutex_lock(&srv->mtx);
             int rst = srv->restart_capture, rlk = srv->reload_keys, rc = srv->reconnect, cg = srv->calib_gyro;
             srv->restart_capture = srv->reload_keys = srv->reconnect = srv->calib_gyro = 0;
+            if (seen_generation != srv->settings_generation) {
+                active_settings = srv->staged_settings;
+                seen_generation = srv->settings_generation;
+                /* Live GamePad-only black/test toggles must redraw. */
+                static_ok = 0;
+            }
             pthread_mutex_unlock(&srv->mtx);
             if (rc) break;
             if (rst) {
@@ -258,7 +294,9 @@ static void *server_thread(void *arg) {
                     }
                 }
 
+                double capture_beg = v98_clock();
                 if (capture_grab(&cap, frame) != 0) {
+                    capture_errors++;
                     /* capture died: restart it, don't drop the pad */
                     capture_stop(&cap);
                     cap_ok = 0; cap_fails++;
@@ -266,6 +304,8 @@ static void *server_thread(void *arg) {
                     set_status(srv, "capture lost, restarting (%d/%d)...", cap_fails, CAP_MAX_FAILS);
                     continue;
                 }
+                sample_capture_ms += (v98_clock() - capture_beg) * 1000.0;
+                sample_capture_count++;
                 cap_fails = 0;
             }
 
@@ -309,8 +349,28 @@ static void *server_thread(void *arg) {
             }
 
             /* canonical loop order: input -> frame -> audio */
+            double frame_beg = v98_clock();
             if (wupstream_frame(pad, frame, FW * 4, WUPSTREAM_BGRA) != 0) {
                 lost = 1; break;
+            }
+            double frame_end = v98_clock();
+            sample_frame_ms += (frame_end - frame_beg) * 1000.0;
+            sample_frames++;
+            double elapsed = frame_end - sample_since;
+            if (elapsed >= 1.0) {
+                server_metrics_t m = {
+                    .fps = sample_frames / elapsed,
+                    .capture_ms = sample_capture_count ? sample_capture_ms / sample_capture_count : 0.0,
+                    .frame_call_ms = sample_frames ? sample_frame_ms / sample_frames : 0.0,
+                    .capture_errors = capture_errors,
+                    .valid = 1
+                };
+                pthread_mutex_lock(&srv->mtx);
+                srv->metrics = m;
+                pthread_mutex_unlock(&srv->mtx);
+                sample_frames = sample_capture_count = 0;
+                sample_capture_ms = sample_frame_ms = 0.0;
+                sample_since = frame_end;
             }
 
             /* audio PC -> pad: paced by WALL CLOCK, not by video frames —
@@ -337,6 +397,9 @@ static void *server_thread(void *arg) {
             }
         }
 
+        pthread_mutex_lock(&srv->mtx);
+        memset(&srv->metrics, 0, sizeof srv->metrics);
+        pthread_mutex_unlock(&srv->mtx);
         capture_stop(&cap);
         if (have_aout) audio_out_stop(&aout);
         if (have_ain) audio_in_stop(&ain);
@@ -362,9 +425,17 @@ static void *server_thread(void *arg) {
 server_t *server_new(settings_t *s) {
     server_t *srv = calloc(1, sizeof *srv);
     srv->s = s;
-    srv->state = SRV_IDLE;
+    atomic_init(&srv->state, SRV_IDLE);
+    atomic_init(&srv->running, 0);
+    atomic_init(&srv->want_stream, 0);
     snprintf(srv->status, sizeof srv->status, "ready");
     pthread_mutex_init(&srv->mtx, NULL);
+    srv->staged_settings = *s;
+    snprintf(srv->last_ui_monitor, sizeof srv->last_ui_monitor,
+             "%s", s->source.output);
+    memcpy(srv->last_ui_gyro_bias, s->input.gyro_bias,
+           sizeof srv->last_ui_gyro_bias);
+    srv->settings_generation = 1;
     srv->running = 1;
     pthread_create(&srv->th, NULL, server_thread, srv);
     return srv;
@@ -382,16 +453,19 @@ void server_destroy(server_t *srv) {
 void server_request_stream(server_t *srv) { srv->want_stream = 1; }
 void server_request_stop(server_t *srv) { srv->want_stream = 0; }
 void server_restart_capture(server_t *srv) {
+    server_sync_settings(srv);
     pthread_mutex_lock(&srv->mtx);
     srv->restart_capture = 1;
     pthread_mutex_unlock(&srv->mtx);
 }
 void server_request_reconnect(server_t *srv) {
+    server_sync_settings(srv);
     pthread_mutex_lock(&srv->mtx);
     srv->reconnect = 1;
     pthread_mutex_unlock(&srv->mtx);
 }
 void server_apply_input_keys(server_t *srv) {
+    server_sync_settings(srv);
     pthread_mutex_lock(&srv->mtx);
     srv->reload_keys = 1;
     pthread_mutex_unlock(&srv->mtx);
@@ -418,4 +492,39 @@ const char *server_status(server_t *srv) {
     snprintf(buf, sizeof buf, "%s", srv->status);
     pthread_mutex_unlock(&srv->mtx);
     return buf;
+}
+
+/* WUP_V98_ALL_IN_ONE: cheap snapshot publication on the GTK thread only.
+ * The existing per-frame command mutex is reused; no additional frame locks. */
+void server_sync_settings(server_t *srv) {
+    if (!srv) return;
+    pthread_mutex_lock(&srv->mtx);
+    /* Resolve worker-side updates only if the GUI has not explicitly
+     * overridden the same field since its last published snapshot. */
+    if (srv->monitor_dirty &&
+        !strcmp(srv->s->source.output, srv->last_ui_monitor))
+        snprintf(srv->s->source.output, sizeof srv->s->source.output,
+                 "%s", srv->staged_settings.source.output);
+    if (srv->gyro_dirty &&
+        !memcmp(srv->s->input.gyro_bias, srv->last_ui_gyro_bias,
+                sizeof srv->last_ui_gyro_bias))
+        memcpy(srv->s->input.gyro_bias, srv->staged_settings.input.gyro_bias,
+               sizeof srv->last_ui_gyro_bias);
+    srv->monitor_dirty = srv->gyro_dirty = 0;
+    srv->staged_settings = *srv->s;
+    snprintf(srv->last_ui_monitor, sizeof srv->last_ui_monitor,
+             "%s", srv->s->source.output);
+    memcpy(srv->last_ui_gyro_bias, srv->s->input.gyro_bias,
+           sizeof srv->last_ui_gyro_bias);
+    srv->settings_generation++;
+    pthread_mutex_unlock(&srv->mtx);
+}
+
+void server_metrics_snapshot(server_t *srv, server_metrics_t *out) {
+    if (!out) return;
+    memset(out, 0, sizeof *out);
+    if (!srv) return;
+    pthread_mutex_lock(&srv->mtx);
+    *out = srv->metrics;
+    pthread_mutex_unlock(&srv->mtx);
 }

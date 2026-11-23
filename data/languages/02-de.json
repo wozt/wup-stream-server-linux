@@ -48,7 +48,6 @@
     "Send PC audio to GamePad": "PC-Audio an GamePad senden",
     "Send GamePad microphone to PC": "GamePad-Mikrofon an PC senden",
     "GamePad slider → PC volume": "GamePad-Regler → PC-Lautstärke",
-    "Use the GamePad volume slider to control PC volume (0–100%); inactive on a black screen": "GamePad-Lautstärkeregler steuert die PC-Lautstärke (0–100 %); bei schwarzem Bildschirm inaktiv",
     "PC audio source:": "PC-Audioquelle:",
     "Mode:": "Modus:",
     "Virtual gamepad (evdev)": "Virtuelles Gamepad (evdev)",
@@ -134,6 +133,9 @@
     "Save button and stick direction mappings per application.": "Tasten und Stickrichtungen pro Anwendung als Profil speichern.",
     "Stored in settings.json.": "Profile werden in settings.json gespeichert.",
     "Clear selection": "Auswahl löschen",
-    "Clear the selected region and show black while streaming": "Bereichsauswahl löschen und während des Streams Schwarz anzeigen"
+    "Clear the selected region and show black while streaming": "Bereichsauswahl löschen und während des Streams Schwarz anzeigen",
+    "Pick a desktop window with one click (Esc cancels)": "Desktop-Fenster mit einem Klick wählen (Esc bricht ab)",
+    "Frame call includes libwupstream pacing. End-to-end latency and network bitrate require GamePad/libwupstream telemetry.": "Der Frame-Aufruf enthält die Taktung von libwupstream. Für Gesamtlatenz und Netzwerkbitrate sind GamePad-Telemetriedaten nötig.",
+    "Use the GamePad volume slider to control PC volume (0–150%); inactive on a black screen": "GamePad-Lautstärkeregler steuert die PC-Lautstärke (0–150 %); bei schwarzem Bildschirm inaktiv"
   }
 }

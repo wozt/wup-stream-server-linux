@@ -77,3 +77,34 @@ fill levels and capture stats to stderr.
 
 Same as upstream wup-stream where applicable; button icons are CC0
 (OpenGameArt "Controller Input Icons").
+
+
+## Optional: click-to-pick and low-overhead stream metrics (V9.8)
+
+- **Window one-click selection**: use the new mouse-pointer button in the
+  Window row. The main window hides while the X11 picker runs. Left-click a
+  visible EWMH client window, or press Escape/right-click to cancel.
+- **Measured statistics** in GamePad Connection: transmitted frame rate,
+  average X11 capture duration and average `wupstream_frame()` call duration
+  (including pacing), plus capture errors, refreshed once a second. **These are
+  not measurements of network bitrate or end-to-end Wi-Fi latency**: the current
+  public `libwupstream` API exposes neither encoded bytes nor render timestamps.
+- **Aspect handling**: the dropdown's order (Letterbox, Crop, Stretch) is now
+  mapped explicitly to the persisted enum; no saved settings migration needed.
+- **Runtime threading**: stream-state flags use C11 atomics and GUI changes
+  publish complete settings snapshots to the stream thread at control changes,
+  not per-frame.
+
+## Optional: build an x86_64 AppImage
+
+After `meson setup build` and compiling `libwupstream`, install `linuxdeploy`
+for x86_64 from its official releases and run:
+
+```sh
+LINUXDEPLOY="$HOME/Downloads/linuxdeploy-x86_64.AppImage" \
+  bash tools/build-appimage.sh
+```
+
+The script places the AppImage in `dist/`. Check that GTK3 and platform-specific
+runtime plugins work on a second Debian machine before publishing a release.
+Note: this X11 application cannot run as a Wayland-native capture program.

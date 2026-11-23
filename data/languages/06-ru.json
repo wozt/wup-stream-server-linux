@@ -48,7 +48,6 @@
     "Send PC audio to GamePad": "Звук ПК на GamePad",
     "Send GamePad microphone to PC": "Микрофон GamePad на ПК",
     "GamePad slider → PC volume": "Громкость ПК с GamePad",
-    "Use the GamePad volume slider to control PC volume (0–100%); inactive on a black screen": "Ползунок GamePad регулирует громкость ПК (0–100 %); не действует при чёрном экране",
     "PC audio source:": "Источник звука ПК:",
     "Mode:": "Режим:",
     "Virtual gamepad (evdev)": "Виртуальный геймпад (evdev)",
@@ -134,6 +133,9 @@
     "Save button and stick direction mappings per application.": "Сохраняйте кнопки и направления стиков в профиле для приложения.",
     "Stored in settings.json.": "Профили сохраняются в settings.json.",
     "Clear selection": "Очистить выделение",
-    "Clear the selected region and show black while streaming": "Удалить выбранную область и показывать чёрный экран во время трансляции"
+    "Clear the selected region and show black while streaming": "Удалить выбранную область и показывать чёрный экран во время трансляции",
+    "Pick a desktop window with one click (Esc cancels)": "Выбрать окно одним щелчком (Esc — отмена)",
+    "Frame call includes libwupstream pacing. End-to-end latency and network bitrate require GamePad/libwupstream telemetry.": "Время вызова кадра включает ожидание libwupstream. Для измерения задержки и сетевого битрейта нужна телеметрия GamePad.",
+    "Use the GamePad volume slider to control PC volume (0–150%); inactive on a black screen": "Ползунок GamePad регулирует громкость ПК (0–150 %); не действует при чёрном экране"
   }
 }

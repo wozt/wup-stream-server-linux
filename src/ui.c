@@ -3,6 +3,7 @@
 #include "ui.h"
 #include "x11util.h"
 #include "select.h"
+#include "window_pick.h"
 #include "input.h"
 #include "server.h"
 #include "viz.h"
@@ -19,14 +20,14 @@ struct ui_t {
     server_t *srv;
     GtkWidget *window;
     GtkStatusIcon *tray;
-    GtkWidget *status_lbl;
+    GtkWidget *status_lbl, *stats_lbl;
     GtkWidget *stream_btn;
     /* source */
     GtkWidget *src_combo, *scr_row, *screen_combo, *win_row, *win_combo;
     GtkListStore *win_store;
     GtkWidget *region_box, *region_lbl;
-    GtkWidget *region_button;
-    gboolean region_picking;
+    GtkWidget *region_button, *window_pick_button;
+    gboolean region_picking, window_picking;
     /* quality */
     GtkWidget *preset_combo, *crf_spin, *kbps_spin, *gop_spin, *lowlat_chk;
     GtkWidget *src_frame, *qual_frame;
@@ -66,9 +67,10 @@ static void schedule_save(ui_t *u) {
     u->save_id = g_timeout_add(800, save_cb, u);
 }
 
+/* Synchronize immutable streaming settings only when a control changes. */
 static void commit_capture(ui_t *u) { schedule_save(u); server_restart_capture(u->srv); }
 static void commit_reconnect(ui_t *u) { schedule_save(u); server_request_reconnect(u->srv); }
-static void commit_live(ui_t *u) { schedule_save(u); }
+static void commit_live(ui_t *u) { schedule_save(u); server_sync_settings(u->srv); }
 
 /* WUP_V5_JSON_THEMES: data-driven palettes; user-defined themes can override shipped IDs.
  * No CSS is read from JSON: only validated hexadecimal colors enter the provider.
@@ -621,6 +623,61 @@ static void on_refresh_windows(GtkButton *b, ui_t *u) {
     refresh_windows(u);
 }
 
+/* WUP_V98_ALL_IN_ONE: click-to-pick a visible EWMH window. Xlib always runs
+ * on an independent display connection owned by the background worker. */
+typedef struct {
+    ui_t *u;
+    unsigned long window_id;
+} window_pick_result_t;
+
+static gboolean window_pick_done(gpointer userdata) {
+    window_pick_result_t *res = userdata;
+    ui_t *u = res->u;
+    u->window_picking = FALSE;
+    gtk_widget_set_sensitive(u->window_pick_button, TRUE);
+    if (res->window_id) {
+        /* Setting the saved ID *before* refreshing makes the combo select it.
+         * EWMH client-list entries are the same ones offered to the picker. */
+        u->s->source.window_id = res->window_id;
+        g_signal_handlers_block_by_func(u->win_combo, G_CALLBACK(on_win_changed), u);
+        refresh_windows(u);
+        g_signal_handlers_unblock_by_func(u->win_combo, G_CALLBACK(on_win_changed), u);
+        if (u->s->source_type != SRC_WINDOW)
+            gtk_combo_box_set_active(GTK_COMBO_BOX(u->src_combo), SRC_WINDOW);
+        else
+            commit_capture(u);
+    }
+    gtk_widget_show(u->window);
+    gtk_window_present(GTK_WINDOW(u->window));
+    g_free(res);
+    return G_SOURCE_REMOVE;
+}
+
+static gpointer window_pick_thread(gpointer userdata) {
+    window_pick_result_t *res = userdata;
+    res->window_id = wup_pick_window_x11();
+    g_idle_add(window_pick_done, res);
+    return NULL;
+}
+
+static gboolean window_pick_launch(gpointer userdata) {
+    window_pick_result_t *res = userdata;
+    GThread *thread = g_thread_new("wup-window-pick", window_pick_thread, res);
+    g_thread_unref(thread);
+    return G_SOURCE_REMOVE;
+}
+
+static void on_window_pick_clicked(GtkButton *button, ui_t *u) {
+    (void)button;
+    if (u->window_picking || u->region_picking) return;
+    u->window_picking = TRUE;
+    gtk_widget_set_sensitive(u->window_pick_button, FALSE);
+    gtk_widget_hide(u->window);
+    window_pick_result_t *res = g_new0(window_pick_result_t, 1);
+    res->u = u;
+    g_timeout_add(180, window_pick_launch, res);
+}
+
 /* WUP_V94_REGION_PICKER: wait for the click release, hide our own UI for a
  * clean desktop snapshot, then run a real X11 drag selector on a worker. */
 typedef struct {
@@ -706,8 +763,28 @@ static void on_src_type_changed(GtkComboBox *cb, ui_t *u) {
     commit_capture(u);
 }
 
+/* WUP_V98_ALL_IN_ONE: UI ordering is Letterbox,Crop,Stretch,
+ * whereas the persisted enum is Stretch,Letterbox,Crop. */
+static int aspect_ui_to_enum(int idx) {
+    switch (idx) {
+    case 0: return ASPECT_LETTERBOX;
+    case 1: return ASPECT_CROP;
+    case 2: return ASPECT_STRETCH;
+    default: return ASPECT_LETTERBOX;
+    }
+}
+
+static int aspect_enum_to_ui(int mode) {
+    switch (mode) {
+    case ASPECT_LETTERBOX: return 0;
+    case ASPECT_CROP: return 1;
+    case ASPECT_STRETCH: return 2;
+    default: return 0;
+    }
+}
+
 static void on_aspect_changed(GtkComboBox *cb, ui_t *u) {
-    u->s->aspect = gtk_combo_box_get_active(cb);
+    u->s->aspect = aspect_ui_to_enum(gtk_combo_box_get_active(cb));
     commit_capture(u);
 }
 
@@ -777,6 +854,10 @@ static GtkWidget *build_source_section(ui_t *u) {
     GtkWidget *refresh = symbol_button("view-refresh-symbolic", "R", "Refresh window list");
     g_signal_connect(refresh, "clicked", G_CALLBACK(on_refresh_windows), u);
     gtk_box_pack_start(GTK_BOX(u->win_row), refresh, FALSE, FALSE, 0);
+    GtkWidget *wpick = symbol_button("input-mouse-symbolic", "Pick", "Pick a desktop window with one click (Esc cancels)");
+    u->window_pick_button = wpick;
+    g_signal_connect(wpick, "clicked", G_CALLBACK(on_window_pick_clicked), u);
+    gtk_box_pack_start(GTK_BOX(u->win_row), wpick, FALSE, FALSE, 0);
 
     u->region_box = wup_source_row(sec, labels, "Region:");
     GtkWidget *select = gtk_button_new_with_label("Select...");
@@ -807,7 +888,7 @@ static GtkWidget *build_source_section(ui_t *u) {
     gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(aspect), "Letterbox (black bars)");
     gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(aspect), "Crop (fill)");
     gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(aspect), "Stretch (distort)");
-    gtk_combo_box_set_active(GTK_COMBO_BOX(aspect), u->s->aspect);
+    gtk_combo_box_set_active(GTK_COMBO_BOX(aspect), aspect_enum_to_ui(u->s->aspect));
     gtk_widget_set_size_request(aspect, 288, -1);
     g_signal_connect(aspect, "changed", G_CALLBACK(on_aspect_changed), u);
     gtk_box_pack_start(GTK_BOX(fit_row), aspect, FALSE, FALSE, 0);
@@ -1584,7 +1665,7 @@ static GtkWidget *build_audio_section(ui_t *u) {
     gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(pad_vol),
                                  u->s->pad_volume_controls_pc);
     gtk_widget_set_tooltip_text(pad_vol,
-        "Use the GamePad volume slider to control PC volume (0–100%); inactive on a black screen");
+        "Use the GamePad volume slider to control PC volume (0–150%); inactive on a black screen");
     g_signal_connect(pad_vol, "toggled", G_CALLBACK(on_pad_volume_pc_toggled), u);
     gtk_widget_set_valign(pad_vol, GTK_ALIGN_CENTER);
     gtk_box_pack_start(GTK_BOX(audio_top), pad_vol, FALSE, FALSE, 0);
@@ -1679,6 +1760,16 @@ static GtkWidget *build_conn_section(ui_t *u) {
     g_signal_connect(u->black_chk, "toggled", G_CALLBACK(on_black_toggled), u);
     gtk_box_pack_start(GTK_BOX(line2), u->black_chk, FALSE, FALSE, 0);
     gtk_widget_set_sensitive(u->black_chk, u->s->gamepad_only);
+
+    /* Metrics have a fixed lightweight label; no draw calls, polls or locks
+     * are performed by the frame pipeline for UI updates. */
+    u->stats_lbl = gtk_label_new("FPS --  |  Cap -- ms  |  Frame -- ms");
+    gtk_label_set_xalign(GTK_LABEL(u->stats_lbl), 0);
+    gtk_label_set_max_width_chars(GTK_LABEL(u->stats_lbl), 44);
+    gtk_label_set_ellipsize(GTK_LABEL(u->stats_lbl), PANGO_ELLIPSIZE_END);
+    gtk_widget_set_tooltip_text(u->stats_lbl,
+        "Frame call includes libwupstream pacing. End-to-end latency and network bitrate require GamePad/libwupstream telemetry.");
+    gtk_box_pack_start(GTK_BOX(sec), u->stats_lbl, FALSE, FALSE, 0);
     return frame_of(sec);
 }
 
@@ -1985,6 +2076,19 @@ void ui_refresh_status(ui_t *u) {
              wup_i18n_lookup(u->i18n,"Status"),
              wup_i18n_lookup(u->i18n,server_status(u->srv)));
     gtk_label_set_text(GTK_LABEL(u->status_lbl), buf);
+    if (u->stats_lbl) {
+        server_metrics_t m = {0};
+        server_metrics_snapshot(u->srv, &m);
+        char metrics_text[180];
+        if (m.valid && st == SRV_STREAMING)
+            snprintf(metrics_text, sizeof metrics_text,
+                "FPS %.1f  |  Cap %.1fms  |  Frame %.1fms  |  Err %u",
+                m.fps, m.capture_ms, m.frame_call_ms, m.capture_errors);
+        else
+            snprintf(metrics_text, sizeof metrics_text,
+                     "FPS --  |  Cap -- ms  |  Frame -- ms");
+        gtk_label_set_text(GTK_LABEL(u->stats_lbl), metrics_text);
+    }
     if (u->stream_btn) {
         int active = st == SRV_STREAMING || st == SRV_WAITING_PAD;
         if (u->stream_icon_mode != active) {

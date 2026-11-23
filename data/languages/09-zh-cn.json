@@ -48,7 +48,6 @@
     "Send PC audio to GamePad": "电脑音频传至 GamePad",
     "Send GamePad microphone to PC": "GamePad 麦克风传至电脑",
     "GamePad slider → PC volume": "GamePad 控制电脑音量",
-    "Use the GamePad volume slider to control PC volume (0–100%); inactive on a black screen": "使用 GamePad 音量滑块调节电脑音量（0–100%）；黑屏时不生效",
     "PC audio source:": "电脑音频源：",
     "Mode:": "模式：",
     "Virtual gamepad (evdev)": "虚拟手柄 (evdev)",
@@ -134,6 +133,9 @@
     "Save button and stick direction mappings per application.": "可按应用保存按钮及摇杆方向映射。",
     "Stored in settings.json.": "预设保存在 settings.json 中。",
     "Clear selection": "清除选区",
-    "Clear the selected region and show black while streaming": "清除所选区域，并在串流时显示黑屏"
+    "Clear the selected region and show black while streaming": "清除所选区域，并在串流时显示黑屏",
+    "Pick a desktop window with one click (Esc cancels)": "单击选择窗口（Esc 取消）",
+    "Frame call includes libwupstream pacing. End-to-end latency and network bitrate require GamePad/libwupstream telemetry.": "帧调用时间包含 libwupstream 等待时间。端到端延迟和网络码率需要 GamePad 端遥测数据。",
+    "Use the GamePad volume slider to control PC volume (0–150%); inactive on a black screen": "使用 GamePad 音量滑块调节电脑音量（0–150%）；黑屏时不生效"
   }
 }
