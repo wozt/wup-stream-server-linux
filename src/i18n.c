@@ -164,7 +164,7 @@ void wup_i18n_select(wup_i18n_t *tr, const char *id) {
 const char *wup_i18n_selected(const wup_i18n_t *tr) {
     return tr && tr->current ? tr->current->id : "en";
 }
-const char *wup_i18n_t(const wup_i18n_t *tr, const char *english) {
+const char *wup_i18n_lookup(const wup_i18n_t *tr, const char *english) {
     if (!english) return "";
     if (!tr || !tr->current || !tr->current->entries) return english;
     const char *value=g_hash_table_lookup(tr->current->entries,english);
@@ -222,7 +222,7 @@ static void translate_combo(GtkWidget *widget, const wup_i18n_t *tr) {
             g_free(item->original);
             item->original=g_strdup(current ? current : "");
         }
-        const char *translated=wup_i18n_t(tr,item->original);
+        const char *translated=wup_i18n_lookup(tr,item->original);
         if (g_strcmp0(current,translated)!=0)
             gtk_list_store_set(GTK_LIST_STORE(model),&iter,0,translated,-1);
         g_free(item->displayed);
@@ -249,7 +249,7 @@ void wup_i18n_translate_tree(GtkWidget *widget, const wup_i18n_t *tr,
             }
         }
         if (source) {
-            const char *value=wup_i18n_t(tr,source);
+            const char *value=wup_i18n_lookup(tr,source);
             if (g_strcmp0(gtk_label_get_text(GTK_LABEL(widget)),value)!=0)
                 gtk_label_set_text(GTK_LABEL(widget),value);
         }
@@ -264,7 +264,7 @@ void wup_i18n_translate_tree(GtkWidget *widget, const wup_i18n_t *tr,
                 source=g_object_get_data(G_OBJECT(widget),"wup-i18n-tip");
             } else g_free(tip);
         }
-        if (source) gtk_widget_set_tooltip_text(widget,wup_i18n_t(tr,source));
+        if (source) gtk_widget_set_tooltip_text(widget,wup_i18n_lookup(tr,source));
     }
     translate_combo(widget,tr);
     if (GTK_IS_CONTAINER(widget)) {

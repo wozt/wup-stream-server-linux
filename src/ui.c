@@ -303,7 +303,7 @@ static void wup_theme_refresh(ui_t *u) {
     u->themes = wup_load_themes();
     for (guint i=0; i<u->themes->len; i++) {
         wup_theme_t *t=g_ptr_array_index(u->themes,i);
-        gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(u->theme_combo),t->id,wup_i18n_t(u->i18n,t->name));
+        gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(u->theme_combo),t->id,wup_i18n_lookup(u->i18n,t->name));
     }
     if (!gtk_combo_box_set_active_id(GTK_COMBO_BOX(u->theme_combo),u->s->theme_id)) {
         if (!gtk_combo_box_set_active_id(GTK_COMBO_BOX(u->theme_combo),"ocean"))
@@ -353,7 +353,7 @@ static void wup_apply_language(ui_t *u) {
         };
         const char *translated[6];
         for (int i=0; i<6; i++)
-            translated[i]=wup_i18n_t(u->i18n,pad_words[i]);
+            translated[i]=wup_i18n_lookup(u->i18n,pad_words[i]);
         pad_viz_set_labels(u->viz_area,translated);
     }
     /* The theme dropdown is generated from theme JSON, not English widgets. */
@@ -362,7 +362,7 @@ static void wup_apply_language(ui_t *u) {
     u->stream_icon_mode=-1;
     ui_refresh_status(u);
     gtk_window_set_title(GTK_WINDOW(u->window),
-                         wup_i18n_t(u->i18n,"WUP Stream — Settings"));
+                         wup_i18n_lookup(u->i18n,"WUP Stream — Settings"));
 }
 
 static void wup_language_changed(GtkComboBox *combo,ui_t *u) {
@@ -873,7 +873,7 @@ static void on_cmd_preset_changed(GtkComboBox *cb, ui_t *u) {
 
 static void on_cmd_save(GtkButton *b, ui_t *u) {
     (void)b;
-    GtkWidget *dlg = gtk_dialog_new_with_buttons(wup_i18n_t(u->i18n,"Save command preset"),
+    GtkWidget *dlg = gtk_dialog_new_with_buttons(wup_i18n_lookup(u->i18n,"Save command preset"),
         GTK_WINDOW(gtk_widget_get_toplevel(GTK_WIDGET(u->cmd_combo))),
         GTK_DIALOG_MODAL, "_Cancel", GTK_RESPONSE_CANCEL,
         "_Save", GTK_RESPONSE_ACCEPT, NULL);
@@ -946,15 +946,15 @@ static void on_key_help(GtkButton *b, ui_t *u) {
         "\n"
         "  Command presets save whole keymaps (buttons + stick dirs)\n"
         "  as JSON in settings.json - one per app if you like.";
-    GtkWidget *dlg = gtk_dialog_new_with_buttons(wup_i18n_t(u->i18n,"Key mapping help"),
+    GtkWidget *dlg = gtk_dialog_new_with_buttons(wup_i18n_lookup(u->i18n,"Key mapping help"),
         GTK_WINDOW(gtk_widget_get_toplevel(GTK_WIDGET(u->cmd_combo))),
-        GTK_DIALOG_MODAL, wup_i18n_t(u->i18n,"_Close"), GTK_RESPONSE_CLOSE, NULL);
+        GTK_DIALOG_MODAL, wup_i18n_lookup(u->i18n,"_Close"), GTK_RESPONSE_CLOSE, NULL);
     GtkWidget *content = gtk_dialog_get_content_area(GTK_DIALOG(dlg));
     GtkWidget *sw = gtk_scrolled_window_new(NULL, NULL);
     gtk_widget_set_size_request(sw, 420, 380);
     GtkWidget *tv = gtk_text_view_new();
     gtk_text_view_set_editable(GTK_TEXT_VIEW(tv), FALSE);
-    const char *help=wup_i18n_t(u->i18n,"Key mapping help body");
+    const char *help=wup_i18n_lookup(u->i18n,"Key mapping help body");
     gtk_text_buffer_set_text(gtk_text_view_get_buffer(GTK_TEXT_VIEW(tv)),
         !strcmp(help,"Key mapping help body") ? txt : help, -1);
     gtk_container_add(GTK_CONTAINER(sw), tv);
@@ -1546,14 +1546,14 @@ void ui_refresh_status(ui_t *u) {
     char buf[512];
     int st = server_state(u->srv);
     snprintf(buf, sizeof buf, "%s: %s",
-             wup_i18n_t(u->i18n,"Status"),
-             wup_i18n_t(u->i18n,server_status(u->srv)));
+             wup_i18n_lookup(u->i18n,"Status"),
+             wup_i18n_lookup(u->i18n,server_status(u->srv)));
     gtk_label_set_text(GTK_LABEL(u->status_lbl), buf);
     if (u->stream_btn) {
         int active = st == SRV_STREAMING || st == SRV_WAITING_PAD;
         if (u->stream_icon_mode != active) {
             gtk_button_set_label(GTK_BUTTON(u->stream_btn),
-                                 wup_i18n_t(u->i18n,active ? "Stop stream" : "Start stream"));
+                                 wup_i18n_lookup(u->i18n,active ? "Stop stream" : "Start stream"));
             button_symbol(u->stream_btn, active ? "media-playback-stop-symbolic"
                                                 : "media-playback-start-symbolic");
             u->stream_icon_mode = active;
