@@ -1450,15 +1450,106 @@ static gboolean wup_header_press(GtkWidget *widget,GdkEventButton *event,gpointe
     }
     return FALSE;
 }
-static gboolean wup_resize_press(GtkWidget *widget,GdkEventButton *event,gpointer data) {
-    (void)widget;
-    ui_t *u=data;
-    if (event->button != 1 || event->type != GDK_BUTTON_PRESS) return FALSE;
-    gtk_window_begin_resize_drag(GTK_WINDOW(u->window),GDK_WINDOW_EDGE_SOUTH_EAST,
-                                 event->button,(int)event->x_root,
-                                 (int)event->y_root,event->time);
+/* WUP_V7_WINDOW_EDGES */
+/* Undecorated X11 windows have no WM-supplied resize border. Give all
+ * eight directions small, invisible input strips and an appropriate
+ * cursor. The corner strips are added last so they win hit-testing. */
+static GdkWindowEdge wup_edge_for_zone(GtkWidget *zone) {
+    return (GdkWindowEdge)(GPOINTER_TO_INT(
+        g_object_get_data(G_OBJECT(zone), "wup-resize-edge")) - 1);
+}
+
+static GdkCursorType wup_cursor_for_edge(GdkWindowEdge edge) {
+    switch (edge) {
+    case GDK_WINDOW_EDGE_NORTH:      return GDK_TOP_SIDE;
+    case GDK_WINDOW_EDGE_SOUTH:      return GDK_BOTTOM_SIDE;
+    case GDK_WINDOW_EDGE_WEST:       return GDK_LEFT_SIDE;
+    case GDK_WINDOW_EDGE_EAST:       return GDK_RIGHT_SIDE;
+    case GDK_WINDOW_EDGE_NORTH_WEST: return GDK_TOP_LEFT_CORNER;
+    case GDK_WINDOW_EDGE_NORTH_EAST: return GDK_TOP_RIGHT_CORNER;
+    case GDK_WINDOW_EDGE_SOUTH_WEST: return GDK_BOTTOM_LEFT_CORNER;
+    case GDK_WINDOW_EDGE_SOUTH_EAST: return GDK_BOTTOM_RIGHT_CORNER;
+    default:                         return GDK_LEFT_PTR;
+    }
+}
+
+static gboolean wup_resize_enter(GtkWidget *zone, GdkEventCrossing *event,
+                                 gpointer data) {
+    ui_t *u = data;
+    if (!event->window) return FALSE;
+    if (gtk_window_is_maximized(GTK_WINDOW(u->window))) {
+        gdk_window_set_cursor(event->window, NULL);
+        return FALSE;
+    }
+    GdkDisplay *display = gdk_window_get_display(event->window);
+    GdkCursor *cursor = gdk_cursor_new_for_display(
+        display, wup_cursor_for_edge(wup_edge_for_zone(zone)));
+    gdk_window_set_cursor(event->window, cursor);
+    if (cursor) g_object_unref(cursor);
+    return FALSE;
+}
+
+static gboolean wup_resize_leave(GtkWidget *zone, GdkEventCrossing *event,
+                                 gpointer data) {
+    (void)zone;
+    (void)data;
+    if (event->window) gdk_window_set_cursor(event->window, NULL);
+    return FALSE;
+}
+
+static gboolean wup_resize_press(GtkWidget *zone, GdkEventButton *event,
+                                 gpointer data) {
+    ui_t *u = data;
+    if (event->button != GDK_BUTTON_PRIMARY ||
+        event->type != GDK_BUTTON_PRESS ||
+        gtk_window_is_maximized(GTK_WINDOW(u->window))) return FALSE;
+    gtk_window_begin_resize_drag(GTK_WINDOW(u->window),
+                                 wup_edge_for_zone(zone), event->button,
+                                 (gint)event->x_root, (gint)event->y_root,
+                                 event->time);
     return TRUE;
 }
+
+static void wup_add_resize_zone(GtkOverlay *overlay, ui_t *u,
+                                GdkWindowEdge edge,
+                                GtkAlign horizontal, GtkAlign vertical,
+                                int width, int height) {
+    GtkWidget *zone = gtk_event_box_new();
+    /* Invisible event box receives pointer events, but paints no frame. */
+    gtk_event_box_set_visible_window(GTK_EVENT_BOX(zone), FALSE);
+    gtk_widget_set_halign(zone, horizontal);
+    gtk_widget_set_valign(zone, vertical);
+    gtk_widget_set_size_request(zone, width, height);
+    gtk_widget_add_events(zone, GDK_BUTTON_PRESS_MASK |
+                                GDK_ENTER_NOTIFY_MASK | GDK_LEAVE_NOTIFY_MASK);
+    g_object_set_data(G_OBJECT(zone), "wup-resize-edge",
+                      GINT_TO_POINTER((int)edge + 1));
+    g_signal_connect(zone, "button-press-event", G_CALLBACK(wup_resize_press), u);
+    g_signal_connect(zone, "enter-notify-event", G_CALLBACK(wup_resize_enter), u);
+    g_signal_connect(zone, "leave-notify-event", G_CALLBACK(wup_resize_leave), u);
+    gtk_overlay_add_overlay(overlay, zone);
+}
+
+static void wup_install_resize_edges(GtkOverlay *overlay, ui_t *u) {
+    /* 5px edges; 12px corners. Keeps the interactive surface compact. */
+    wup_add_resize_zone(overlay, u, GDK_WINDOW_EDGE_NORTH,
+                        GTK_ALIGN_FILL, GTK_ALIGN_START, -1, 5);
+    wup_add_resize_zone(overlay, u, GDK_WINDOW_EDGE_SOUTH,
+                        GTK_ALIGN_FILL, GTK_ALIGN_END, -1, 5);
+    wup_add_resize_zone(overlay, u, GDK_WINDOW_EDGE_WEST,
+                        GTK_ALIGN_START, GTK_ALIGN_FILL, 5, -1);
+    wup_add_resize_zone(overlay, u, GDK_WINDOW_EDGE_EAST,
+                        GTK_ALIGN_END, GTK_ALIGN_FILL, 5, -1);
+    wup_add_resize_zone(overlay, u, GDK_WINDOW_EDGE_NORTH_WEST,
+                        GTK_ALIGN_START, GTK_ALIGN_START, 12, 12);
+    wup_add_resize_zone(overlay, u, GDK_WINDOW_EDGE_NORTH_EAST,
+                        GTK_ALIGN_END, GTK_ALIGN_START, 12, 12);
+    wup_add_resize_zone(overlay, u, GDK_WINDOW_EDGE_SOUTH_WEST,
+                        GTK_ALIGN_START, GTK_ALIGN_END, 12, 12);
+    wup_add_resize_zone(overlay, u, GDK_WINDOW_EDGE_SOUTH_EAST,
+                        GTK_ALIGN_END, GTK_ALIGN_END, 12, 12);
+}
+
 static void wup_win_minimize(GtkButton *button,ui_t *u) {
     (void)button; gtk_window_iconify(GTK_WINDOW(u->window));
 }
@@ -1583,38 +1674,37 @@ ui_t *ui_new(settings_t *s, server_t *srv) {
             g_object_unref(ic);
         }
     }
-    gtk_window_set_default_size(GTK_WINDOW(u->window), 960, 688);
+    gtk_window_set_default_size(GTK_WINDOW(u->window), 960, 682);
     g_signal_connect(u->window, "delete-event", G_CALLBACK(gtk_widget_hide_on_delete), NULL);
     gtk_widget_set_size_request(u->window, 680, 530);
 
-    /* single scrollable page: status bar + sections */
+    /* WUP_V7: borderless main window + transparent hit-test edges. */
+    GtkWidget *window_overlay = gtk_overlay_new();
+    gtk_container_add(GTK_CONTAINER(u->window), window_overlay);
+    GtkWidget *outer = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+    gtk_container_add(GTK_CONTAINER(window_overlay), outer);
     GtkWidget *scroll = gtk_scrolled_window_new(NULL, NULL);
     gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(scroll),
                                    GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC);
-    /* Keep our custom titlebar outside the scroll area. */
-    GtkWidget *outer=gtk_box_new(GTK_ORIENTATION_VERTICAL,0);
-    gtk_container_add(GTK_CONTAINER(u->window),outer);
-    GtkWidget *resize_overlay=gtk_overlay_new();
-    gtk_box_pack_start(GTK_BOX(outer),resize_overlay,TRUE,TRUE,0);
-    gtk_container_add(GTK_CONTAINER(resize_overlay), scroll);
-    GtkWidget *resize_grip=gtk_event_box_new();
-    GtkWidget *grip_icon=gtk_label_new("◢");
-    gtk_container_add(GTK_CONTAINER(resize_grip),grip_icon);
-    gtk_widget_set_halign(resize_grip,GTK_ALIGN_END);
-    gtk_widget_set_valign(resize_grip,GTK_ALIGN_END);
-    gtk_widget_set_size_request(resize_grip,14,14);
-    gtk_widget_add_events(resize_grip,GDK_BUTTON_PRESS_MASK);
-    g_signal_connect(resize_grip,"button-press-event",
-                     G_CALLBACK(wup_resize_press),u);
-    gtk_overlay_add_overlay(GTK_OVERLAY(resize_overlay),resize_grip);
+    gtk_box_pack_start(GTK_BOX(outer), scroll, TRUE, TRUE, 0);
+    wup_install_resize_edges(GTK_OVERLAY(window_overlay), u);
     GtkWidget *page = gtk_box_new(GTK_ORIENTATION_VERTICAL, 4);
     gtk_container_set_border_width(GTK_CONTAINER(page), 5);
     gtk_container_add(GTK_CONTAINER(scroll), page);
 
-    /* top bar: status + stream button */
+    /* WUP_V7: the *whole blank titlebar* is a move handle, not only
+     * the small logo. Buttons and dropdowns still handle their clicks. */
+    GtkWidget *title_events = gtk_event_box_new();
+    gtk_event_box_set_visible_window(GTK_EVENT_BOX(title_events), FALSE);
+    gtk_widget_add_events(title_events, GDK_BUTTON_PRESS_MASK);
+    g_signal_connect(title_events, "button-press-event",
+                     G_CALLBACK(wup_header_press), u);
+    gtk_box_pack_start(GTK_BOX(outer), title_events, FALSE, FALSE, 0);
+    gtk_box_reorder_child(GTK_BOX(outer), title_events, 0);
     GtkWidget *top = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
-    gtk_box_pack_start(GTK_BOX(outer),top,FALSE,FALSE,0);
-    gtk_box_reorder_child(GTK_BOX(outer),top,0);
+    gtk_widget_set_margin_top(top, 4);
+    gtk_widget_set_margin_bottom(top, 2);
+    gtk_container_add(GTK_CONTAINER(title_events), top);
     u->status_lbl = gtk_label_new("Status: ...");
     gtk_label_set_ellipsize(GTK_LABEL(u->status_lbl), PANGO_ELLIPSIZE_END);
     gtk_label_set_max_width_chars(GTK_LABEL(u->status_lbl), 65);
