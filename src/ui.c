@@ -1,3 +1,4 @@
+/* WUP_V8_UI_POLISH */
 #define _GNU_SOURCE
 #include "ui.h"
 #include "x11util.h"
@@ -276,6 +277,12 @@ static void wup_apply_theme(ui_t *u) {
         ".wup-settings .wup-window-action:hover { background-color:%s; }"
         ".wup-settings .wup-window-close:hover { background-color:%s; color:white; }",
         fg,hover,t->ui[10]);
+    /* V8: Help popup body shares the live JSON theme, including light themes. */
+    g_string_append_printf(css,
+        ".wup-settings .wup-help textview, "
+        ".wup-settings .wup-help textview text { background-color:%s; color:%s; }"
+        ".wup-settings .wup-help scrolledwindow { border:1px solid %s; border-radius:6px; }",
+        entry,fg,border);
     GError *err=NULL;
     gtk_css_provider_load_from_data(u->theme_css,css->str,-1,&err);
     if (err) {g_warning("Theme CSS: %s",err->message);g_clear_error(&err);}
@@ -921,8 +928,37 @@ static void on_cmd_delete(GtkButton *b, ui_t *u) {
     settings_save(u->s);
 }
 
+/* WUP_V8_UI_POLISH: this dialog uses the same theme as the main window,
+ * has no native GTK titlebar and is movable but deliberately not resizable. */
+static gboolean wup_help_drag(GtkWidget *widget, GdkEventButton *event,
+                              gpointer dialog) {
+    (void)widget;
+    if (event->button == GDK_BUTTON_PRIMARY && event->type == GDK_BUTTON_PRESS) {
+        gtk_window_begin_move_drag(GTK_WINDOW(dialog), event->button,
+                                   (gint)event->x_root, (gint)event->y_root,
+                                   event->time);
+        return TRUE;
+    }
+    return FALSE;
+}
+
+static void wup_help_close(GtkButton *button, gpointer dialog) {
+    (void)button;
+    gtk_dialog_response(GTK_DIALOG(dialog), GTK_RESPONSE_CLOSE);
+}
+
+static gboolean wup_help_key(GtkWidget *widget, GdkEventKey *event,
+                             gpointer unused) {
+    (void)unused;
+    if (event->keyval == GDK_KEY_Escape) {
+        gtk_dialog_response(GTK_DIALOG(widget), GTK_RESPONSE_CLOSE);
+        return TRUE;
+    }
+    return FALSE;
+}
+
 static void on_key_help(GtkButton *b, ui_t *u) {
-    (void)b; (void)u;
+    (void)b;
     const char *txt =
         "Key syntax for button/stick mappings:\n"
         "\n"
@@ -946,52 +982,125 @@ static void on_key_help(GtkButton *b, ui_t *u) {
         "\n"
         "  Command presets save whole keymaps (buttons + stick dirs)\n"
         "  as JSON in settings.json - one per app if you like.";
-    GtkWidget *dlg = gtk_dialog_new_with_buttons(wup_i18n_lookup(u->i18n,"Key mapping help"),
-        GTK_WINDOW(gtk_widget_get_toplevel(GTK_WIDGET(u->cmd_combo))),
-        GTK_DIALOG_MODAL, wup_i18n_lookup(u->i18n,"_Close"), GTK_RESPONSE_CLOSE, NULL);
+
+    GtkWidget *dlg = gtk_dialog_new_with_buttons(
+        wup_i18n_lookup(u->i18n, "Key mapping help"),
+        GTK_WINDOW(u->window), GTK_DIALOG_MODAL, NULL);
+    gtk_window_set_decorated(GTK_WINDOW(dlg), FALSE);
+    gtk_window_set_resizable(GTK_WINDOW(dlg), FALSE);
+    gtk_window_set_position(GTK_WINDOW(dlg), GTK_WIN_POS_CENTER_ON_PARENT);
+    gtk_window_set_default_size(GTK_WINDOW(dlg), 465, 420);
+    gtk_style_context_add_class(gtk_widget_get_style_context(dlg), "wup-settings");
     GtkWidget *content = gtk_dialog_get_content_area(GTK_DIALOG(dlg));
+    gtk_style_context_add_class(gtk_widget_get_style_context(content), "wup-help");
+    gtk_container_set_border_width(GTK_CONTAINER(content), 9);
+    gtk_box_set_spacing(GTK_BOX(content), 7);
+
+    GtkWidget *bar = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+    gtk_box_pack_start(GTK_BOX(content), bar, FALSE, FALSE, 0);
+    GtkWidget *drag = gtk_event_box_new();
+    gtk_event_box_set_visible_window(GTK_EVENT_BOX(drag), FALSE);
+    gtk_widget_add_events(drag, GDK_BUTTON_PRESS_MASK);
+    gtk_widget_set_hexpand(drag, TRUE);
+    GtkWidget *title = gtk_label_new(wup_i18n_lookup(u->i18n, "Key mapping help"));
+    gtk_label_set_xalign(GTK_LABEL(title), 0);
+    gtk_style_context_add_class(gtk_widget_get_style_context(title), "wup-section-title");
+    gtk_container_add(GTK_CONTAINER(drag), title);
+    gtk_box_pack_start(GTK_BOX(bar), drag, TRUE, TRUE, 0);
+    g_signal_connect(drag, "button-press-event", G_CALLBACK(wup_help_drag), dlg);
+
+    GtkWidget *close = gtk_button_new();
+    gtk_style_context_add_class(gtk_widget_get_style_context(close), "wup-window-action");
+    gtk_style_context_add_class(gtk_widget_get_style_context(close), "wup-window-close");
+    gtk_widget_set_tooltip_text(close, wup_i18n_lookup(u->i18n, "_Close"));
+    gtk_widget_set_size_request(close, 26, 23);
+    if (gtk_icon_theme_has_icon(gtk_icon_theme_get_default(), "window-close-symbolic"))
+        gtk_container_add(GTK_CONTAINER(close), gtk_image_new_from_icon_name(
+            "window-close-symbolic", GTK_ICON_SIZE_MENU));
+    else gtk_container_add(GTK_CONTAINER(close), gtk_label_new("×"));
+    gtk_box_pack_end(GTK_BOX(bar), close, FALSE, FALSE, 0);
+    g_signal_connect(close, "clicked", G_CALLBACK(wup_help_close), dlg);
+    g_signal_connect(dlg, "key-press-event", G_CALLBACK(wup_help_key), NULL);
+
     GtkWidget *sw = gtk_scrolled_window_new(NULL, NULL);
-    gtk_widget_set_size_request(sw, 420, 380);
+    gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(sw),
+                                   GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC);
+    gtk_widget_set_size_request(sw, 440, 350);
+    gtk_widget_set_vexpand(sw, TRUE);
     GtkWidget *tv = gtk_text_view_new();
     gtk_text_view_set_editable(GTK_TEXT_VIEW(tv), FALSE);
-    const char *help=wup_i18n_lookup(u->i18n,"Key mapping help body");
+    gtk_text_view_set_cursor_visible(GTK_TEXT_VIEW(tv), FALSE);
+    gtk_text_view_set_monospace(GTK_TEXT_VIEW(tv), TRUE);
+    gtk_text_view_set_wrap_mode(GTK_TEXT_VIEW(tv), GTK_WRAP_WORD_CHAR);
+    gtk_text_view_set_left_margin(GTK_TEXT_VIEW(tv), 10);
+    gtk_text_view_set_right_margin(GTK_TEXT_VIEW(tv), 10);
+    gtk_text_view_set_top_margin(GTK_TEXT_VIEW(tv), 10);
+    const char *help = wup_i18n_lookup(u->i18n, "Key mapping help body");
     gtk_text_buffer_set_text(gtk_text_view_get_buffer(GTK_TEXT_VIEW(tv)),
-        !strcmp(help,"Key mapping help body") ? txt : help, -1);
+        !strcmp(help, "Key mapping help body") ? txt : help, -1);
     gtk_container_add(GTK_CONTAINER(sw), tv);
-    gtk_container_add(GTK_CONTAINER(content), sw);
-    wup_i18n_translate_tree(dlg,u->i18n,NULL);
+    gtk_box_pack_start(GTK_BOX(content), sw, TRUE, TRUE, 0);
+
+    /* Do not show GTK's otherwise-empty native dialog footer. */
+    GtkWidget *actions = gtk_dialog_get_action_area(GTK_DIALOG(dlg));
+    gtk_widget_set_no_show_all(actions, TRUE);
+    gtk_widget_hide(actions);
     gtk_widget_show_all(dlg);
     gtk_dialog_run(GTK_DIALOG(dlg));
     gtk_widget_destroy(dlg);
 }
 
-/* button index -> icon file (data/icons), NULL = text label */
+/* WUP_V8_UI_POLISH: vector Wii U button glyphs, rather than Xbox PNG art.
+ * Lookup order: build tree / working tree / XDG data installation paths.
+ * A text fallback keeps the UI usable even without an SVG loader. */
 static const char *btn_icon_files[18] = {
-    "btn_a.png", "btn_b.png", "btn_x.png", "btn_y.png",
-    "btn_left.png", "btn_right.png", "btn_up.png", "btn_down.png",
-    "btn_zl.png", "btn_zr.png", "btn_l.png", "btn_r.png",
-    "btn_plus.png", "btn_minus.png", NULL,      /* HOME: no icon */
-    "btn_l3.png", "btn_r3.png", NULL            /* TV: no icon */
+    "btn_a.svg", "btn_b.svg", "btn_x.svg", "btn_y.svg",
+    "btn_left.svg", "btn_right.svg", "btn_up.svg", "btn_down.svg",
+    "btn_zl.svg", "btn_zr.svg", "btn_l.svg", "btn_r.svg",
+    "btn_plus.svg", "btn_minus.svg", "btn_home.svg",
+    "btn_l3.svg", "btn_r3.svg", "btn_tv.svg"
 };
 
+static char *wup_wiiu_svg_path(const char *file) {
+    char *exe = g_file_read_link("/proc/self/exe", NULL);
+    char *bindir = exe ? g_path_get_dirname(exe) : NULL;
+    char *dev = bindir ? g_build_filename(bindir, "..", "data", "icons", "wiiu", file, NULL) : NULL;
+    char *cwd = g_build_filename("data", "icons", "wiiu", file, NULL);
+    char *user = g_build_filename(g_get_user_data_dir(), "wupstreamd", "icons", "wiiu", file, NULL);
+    char *local = g_build_filename("/usr/local/share/wupstreamd/icons/wiiu", file, NULL);
+    char *system = g_build_filename("/usr/share/wupstreamd/icons/wiiu", file, NULL);
+    const char *paths[] = {dev, cwd, user, local, system, NULL};
+    char *found = NULL;
+    for (guint i = 0; i < G_N_ELEMENTS(paths) - 1; i++) {
+        if (paths[i] && g_file_test(paths[i], G_FILE_TEST_IS_REGULAR)) {
+            found = g_strdup(paths[i]);
+            break;
+        }
+    }
+    g_free(dev); g_free(cwd); g_free(user); g_free(local); g_free(system);
+    g_free(bindir); g_free(exe);
+    return found;
+}
+
 static GtkWidget *btn_icon_widget(int idx) {
-    const char *f = btn_icon_files[idx];
-    if (!f) return mk_label(wbtn_names[idx]);
-    char path[700], exe[512];
-    ssize_t n = readlink("/proc/self/exe", exe, sizeof exe - 1);
-    if (n <= 0) return mk_label(wbtn_names[idx]);
-    exe[n] = 0;
-    char *slash = strrchr(exe, '/');
-    if (slash) *slash = 0;
-    snprintf(path, sizeof path, "%s/../data/icons/%s", exe, f);
-    GError *e = NULL;
-    GdkPixbuf *pb = gdk_pixbuf_new_from_file_at_scale(path, 20, 20, TRUE, &e);
-    if (e) g_error_free(e);
-    if (!pb) return mk_label(wbtn_names[idx]);
-    GtkWidget *img = gtk_image_new_from_pixbuf(pb);
-    g_object_unref(pb);
-    gtk_widget_set_tooltip_text(img, wbtn_names[idx]);
-    return img;
+    if (idx < 0 || idx >= 18) return gtk_label_new("?");
+    char *path = wup_wiiu_svg_path(btn_icon_files[idx]);
+    GdkPixbuf *pixbuf = path ? gdk_pixbuf_new_from_file_at_scale(path, 23, 23, TRUE, NULL) : NULL;
+    g_free(path);
+    GtkWidget *icon = NULL;
+    if (pixbuf) {
+        icon = gtk_image_new_from_pixbuf(pixbuf);
+        g_object_unref(pixbuf);
+    } else {
+        icon = gtk_label_new(wbtn_names[idx]);
+    }
+    GtkWidget *cell = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
+    gtk_widget_set_size_request(cell, 26, 23);
+    gtk_widget_set_halign(cell, GTK_ALIGN_CENTER);
+    gtk_widget_set_valign(cell, GTK_ALIGN_CENTER);
+    gtk_box_pack_start(GTK_BOX(cell), icon, TRUE, TRUE, 0);
+    gtk_widget_set_tooltip_text(cell, wbtn_names[idx]);
+    return cell;
 }
 
 static const char *stick_dir_names[8] = {
@@ -1095,37 +1204,51 @@ static GtkWidget *build_input_section(ui_t *u) {
             gtk_box_pack_start(GTK_BOX(prow), dl, FALSE, FALSE, 0);
         }
         gtk_box_pack_start(GTK_BOX(kb), mk_label("Buttons -> keys  (Ctrl+A supported):"), FALSE, FALSE, 0);
-        GtkWidget *kmid = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
-        gtk_box_pack_start(GTK_BOX(kb), kmid, FALSE, FALSE, 0);
+        /* WUP_V8_UI_POLISH: one aligned 6-column grid, fixed icon slots and
+         * equal-width keyboard entries. Preserves all 17 + 8 mapping callbacks. */
         GtkWidget *kgrid = gtk_grid_new();
-        gtk_grid_set_row_spacing(GTK_GRID(kgrid), 0);
-        gtk_grid_set_column_spacing(GTK_GRID(kgrid), 4);
-        for (int i = 0; i < 17; i++) {   /* TV excluded: reserved for screen switching */
-            int col = (i / 9) * 2, row = i % 9;
-            gtk_grid_attach(GTK_GRID(kgrid), btn_icon_widget(i), col, row, 1, 1);
-            u->key_entries[i] = gtk_entry_new();
-            gtk_entry_set_text(GTK_ENTRY(u->key_entries[i]), u->s->input.keys[i]);
-            gtk_entry_set_width_chars(GTK_ENTRY(u->key_entries[i]), 8);
-            g_signal_connect(u->key_entries[i], "changed", G_CALLBACK(on_key_edited), u);
-            gtk_grid_attach(GTK_GRID(kgrid), u->key_entries[i], col + 1, row, 1, 1);
+        gtk_grid_set_row_spacing(GTK_GRID(kgrid), 2);
+        gtk_grid_set_column_spacing(GTK_GRID(kgrid), 5);
+        gtk_widget_set_hexpand(kgrid, TRUE);
+        gtk_box_pack_start(GTK_BOX(kb), kgrid, FALSE, FALSE, 0);
+        const char *titles[6] = {"Wii U", "Key", "Wii U", "Key", "Stick", "Key"};
+        for (int j = 0; j < 6; j++) {
+            GtkWidget *head = mk_label(titles[j]);
+            gtk_widget_set_halign(head, GTK_ALIGN_START);
+            gtk_grid_attach(GTK_GRID(kgrid), head, j, 0, 1, 1);
         }
-        gtk_box_pack_start(GTK_BOX(kmid), kgrid, FALSE, FALSE, 0);
-        /* third sub-column: stick directions -> keys */
-        GtkWidget *sbox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 2);
-        gtk_box_pack_start(GTK_BOX(kmid), sbox, FALSE, FALSE, 0);
-        gtk_box_pack_start(GTK_BOX(sbox), mk_label("Stick -> key:"), FALSE, FALSE, 0);
-        GtkWidget *sgrid = gtk_grid_new();
-        gtk_grid_set_row_spacing(GTK_GRID(sgrid), 0);
-        gtk_grid_set_column_spacing(GTK_GRID(sgrid), 4);
+        GtkSizeGroup *key_width = gtk_size_group_new(GTK_SIZE_GROUP_HORIZONTAL);
+        for (int i = 0; i < 17; i++) { /* TV remains reserved. */
+            const int column = (i / 9) * 2;
+            const int row = (i % 9) + 1;
+            gtk_grid_attach(GTK_GRID(kgrid), btn_icon_widget(i), column, row, 1, 1);
+            GtkWidget *entry = gtk_entry_new();
+            u->key_entries[i] = entry;
+            gtk_entry_set_width_chars(GTK_ENTRY(entry), 7);
+            gtk_entry_set_max_width_chars(GTK_ENTRY(entry), 10);
+            gtk_widget_set_valign(entry, GTK_ALIGN_CENTER);
+            gtk_widget_set_size_request(entry, 77, 22);
+            gtk_entry_set_text(GTK_ENTRY(entry), u->s->input.keys[i]);
+            g_signal_connect(entry, "changed", G_CALLBACK(on_key_edited), u);
+            gtk_size_group_add_widget(key_width, entry);
+            gtk_grid_attach(GTK_GRID(kgrid), entry, column + 1, row, 1, 1);
+        }
         for (int i = 0; i < 8; i++) {
-            gtk_grid_attach(GTK_GRID(sgrid), mk_label(stick_dir_names[i]), 0, i, 1, 1);
-            u->stick_entries[i] = gtk_entry_new();
-            gtk_entry_set_text(GTK_ENTRY(u->stick_entries[i]), u->s->input.stick_keys[i]);
-            gtk_entry_set_width_chars(GTK_ENTRY(u->stick_entries[i]), 7);
-            g_signal_connect(u->stick_entries[i], "changed", G_CALLBACK(on_stick_key_edited), u);
-            gtk_grid_attach(GTK_GRID(sgrid), u->stick_entries[i], 1, i, 1, 1);
+            GtkWidget *direction = gtk_label_new(stick_dir_names[i]);
+            gtk_widget_set_halign(direction, GTK_ALIGN_CENTER);
+            gtk_grid_attach(GTK_GRID(kgrid), direction, 4, i + 1, 1, 1);
+            GtkWidget *entry = gtk_entry_new();
+            u->stick_entries[i] = entry;
+            gtk_entry_set_width_chars(GTK_ENTRY(entry), 7);
+            gtk_entry_set_max_width_chars(GTK_ENTRY(entry), 10);
+            gtk_widget_set_valign(entry, GTK_ALIGN_CENTER);
+            gtk_widget_set_size_request(entry, 77, 22);
+            gtk_entry_set_text(GTK_ENTRY(entry), u->s->input.stick_keys[i]);
+            g_signal_connect(entry, "changed", G_CALLBACK(on_stick_key_edited), u);
+            gtk_size_group_add_widget(key_width, entry);
+            gtk_grid_attach(GTK_GRID(kgrid), entry, 5, i + 1, 1, 1);
         }
-        gtk_box_pack_start(GTK_BOX(sbox), sgrid, FALSE, FALSE, 0);
+        g_object_unref(key_width);
     }
 
     /* Two compact rows under the visualizer, with full tooltip descriptions. */
@@ -1377,6 +1500,9 @@ static void on_quit(GtkMenuItem *i, gpointer data) {
     gtk_main_quit();
 }
 
+/* GTK3 deprecated GtkStatusIcon but provides no replacement in GTK3 itself.
+ * Keep the existing X11 system tray behavior; isolate this compatibility API,
+ * rather than disabling deprecation warnings across the project. */
 static void on_tray_popup(GtkStatusIcon *icon, guint button, guint time, gpointer data) {
     ui_t *u = data;
     (void)icon; (void)button; (void)time;
@@ -1391,10 +1517,11 @@ static void on_tray_popup(GtkStatusIcon *icon, guint button, guint time, gpointe
     GtkWidget *q = gtk_menu_item_new_with_label("Quit");
     g_signal_connect(q, "activate", G_CALLBACK(on_quit), NULL);
     gtk_menu_shell_append(GTK_MENU_SHELL(m), q);
-    wup_i18n_translate_tree(m,u->i18n,NULL);
+    wup_i18n_translate_tree(m, u->i18n, NULL);
     gtk_widget_show_all(m);
-    gtk_menu_popup(GTK_MENU(m), NULL, NULL,
-                   gtk_status_icon_position_menu, icon, button, time);
+    GdkEvent *event = gtk_get_current_event();
+    gtk_menu_popup_at_pointer(GTK_MENU(m), event);
+    if (event) gdk_event_free(event);
 }
 
 /* WUP_V4_THEME_SWITCHER: resolve icon on developer builds AND installed builds.
@@ -1752,6 +1879,8 @@ ui_t *ui_new(settings_t *s, server_t *srv) {
                      G_CALLBACK(on_settings_configure), u);
 
     GdkPixbuf *pb = load_icon();
+    /* Keep GtkStatusIcon compatibility confined to this short block. */
+    G_GNUC_BEGIN_IGNORE_DEPRECATIONS
     u->tray = gtk_status_icon_new();
     if (pb) {
         gtk_status_icon_set_from_pixbuf(u->tray, pb);
@@ -1760,6 +1889,7 @@ ui_t *ui_new(settings_t *s, server_t *srv) {
         gtk_status_icon_set_from_icon_name(u->tray, "network-workgroup");
     }
     gtk_status_icon_set_tooltip_text(u->tray, "wupstreamd");
+    G_GNUC_END_IGNORE_DEPRECATIONS
     g_signal_connect(u->tray, "popup-menu", G_CALLBACK(on_tray_popup), u);
     g_signal_connect(u->tray, "activate", G_CALLBACK(on_open_settings), u);
 

@@ -46,3 +46,5 @@ install_data('data/wupstreamd.png', install_dir: get_option('datadir') / 'icons'
 # WUP_V5_JSON_THEMES: install bundled palettes for installed binary
 install_subdir('data/themes', install_dir: get_option('datadir') / 'wupstreamd')
 install_subdir('data/languages', install_dir: get_option('datadir') / 'wupstreamd') # WUP_V6_JSON_LANGUAGES
+# WUP_V8_UI_POLISH: install Wii U vector button glyphs
+install_subdir('data/icons/wiiu', install_dir: get_option('datadir') / 'wupstreamd' / 'icons')
