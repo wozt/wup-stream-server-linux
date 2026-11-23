@@ -38,6 +38,7 @@ void settings_defaults(settings_t *s) {
     snprintf(s->audio_monitor, sizeof s->audio_monitor, "default");
     s->ui_theme = 2; /* V4 default, for migration only */
     g_strlcpy(s->theme_id, "ocean", sizeof(s->theme_id)); /* WUP_V5_JSON_THEMES */
+    g_strlcpy(s->language_id, "en", sizeof(s->language_id)); /* WUP_V6_JSON_LANGUAGES */
     s->input.mode = INMODE_GAMEPAD;
     s->input.deadzone = 120;
     s->input.sensitivity = 100;
@@ -119,6 +120,8 @@ settings_t *settings_load(void) {
     g_strlcpy(s->theme_id,old_themes[s->ui_theme],sizeof(s->theme_id));
     if (json_object_has_member(root,"theme_id"))
         json_str(root,"theme_id",s->theme_id,sizeof(s->theme_id));
+    if (json_object_has_member(root,"language_id"))
+        json_str(root,"language_id",s->language_id,sizeof(s->language_id));
 
     JsonObject *src = json_obj(root, "source");
     if (src) {
@@ -222,6 +225,7 @@ void settings_save(settings_t *s) {
     json_object_set_string_member(root, "audio_monitor", s->audio_monitor);
     json_object_set_int_member(root, "autostart_stream", s->autostart_stream);
     json_object_set_string_member(root,"theme_id",s->theme_id);
+    json_object_set_string_member(root,"language_id",s->language_id);
 
     JsonObject *src = json_object_new();
     json_object_set_string_member(src, "output", s->source.output);

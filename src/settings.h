@@ -66,6 +66,7 @@ typedef struct {
     char audio_monitor[128];
     int ui_theme; /* V4 numeric setting kept for migration */
     char theme_id[64]; /* WUP_V5_JSON_THEMES */
+    char language_id[64]; /* WUP_V6_JSON_LANGUAGES: en is compiled in */
     int autostart_stream;  /* start streaming when pad connects */
     int gamepad_only;      /* stream a static test image instead of capture (calibration) */
     int gamepad_only_black;/* gamepad-only sends black frames instead of test image */

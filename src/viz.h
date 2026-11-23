@@ -14,3 +14,6 @@ void pad_viz_set_palette(GtkWidget *w, const char *background, const char *shell
                          const char *screen, const char *border,
                          const char *text, const char *muted,
                          const char *accent, const char *negative);
+
+/* WUP_V6_JSON_LANGUAGES: localized labels in Cairo. */
+void pad_viz_set_labels(GtkWidget *w, const char *const labels[6]);

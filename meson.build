@@ -33,6 +33,7 @@ executable('wupstreamd',
   'src/server.c',
   'src/ui.c',
   'src/viz.c',
+  'src/i18n.c', # WUP_V6_JSON_LANGUAGES
   include_directories: [include_directories('src'), wup_inc],
   dependencies: [gtkdep, x11, xrandr, xtst, xext, xinerama, json_glib, threads, m_dep, swscale, xcb, xcbshm, x11xcb, pulse, cairo],
   link_args: [wup_lib],
@@ -44,3 +45,4 @@ install_data('data/wupstreamd.svg', install_dir: get_option('datadir') / 'icons'
 install_data('data/wupstreamd.png', install_dir: get_option('datadir') / 'icons' / 'hicolor' / '256x256' / 'apps')
 # WUP_V5_JSON_THEMES: install bundled palettes for installed binary
 install_subdir('data/themes', install_dir: get_option('datadir') / 'wupstreamd')
+install_subdir('data/languages', install_dir: get_option('datadir') / 'wupstreamd') # WUP_V6_JSON_LANGUAGES

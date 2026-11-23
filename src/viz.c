@@ -18,6 +18,7 @@ typedef struct {
     gboolean has;
     gboolean themed;
     GdkRGBA palette[VCOLORS];
+    char localized[6][128]; /* WUP_V6_JSON_LANGUAGES */
 } viz_state_t;
 static cairo_user_data_key_t viz_theme_key;
 
@@ -80,6 +81,22 @@ static void rgba(cairo_t *cr, double r, double g, double b, double a) {
              lum>.18 ? VMUTED : lum>.10 ? VSHELL : VBG;
     viz_role(cr,role,a);
 }
+/* Six translatable strings on the tiny Cairo screen; no heap ownership issues. */
+void pad_viz_set_labels(GtkWidget *w,const char *const labels[6]) {
+    if (!w) return;
+    viz_state_t *st=g_object_get_data(G_OBJECT(w),"viz-state");
+    if (!st || !labels) return;
+    for (int i=0; i<6; i++)
+        g_strlcpy(st->localized[i],labels[i] ? labels[i] : "",
+                  sizeof st->localized[i]);
+    gtk_widget_queue_draw(w);
+}
+static const char *pad_word(cairo_t *cr,int i,const char *fallback) {
+    const viz_state_t *st=cairo_get_user_data(cr,&viz_theme_key);
+    if (st && i>=0 && i<6 && st->localized[i][0]) return st->localized[i];
+    return fallback;
+}
+
 static void accent_color(cairo_t *cr, double a) {
     if (viz_paint_state(cr)) viz_role(cr,VACCENT,a);
     else rgba(cr,accent[0],accent[1],accent[2],a);
@@ -397,7 +414,7 @@ static void motion_screen(cairo_t *cr, const wupstream_input_t *in,
     if (!have) {
         /* Present gauges in idle state, not a blank display. The tracks
            are deliberately muted until actual pad packets arrive. */
-        label(cr, "WAITING FOR GAMEPAD", 220, 73, 9.5, TRUE,
+        label(cr, pad_word(cr,0,"WAITING FOR GAMEPAD"), 220, 73, 9.5, TRUE,
               .79, .88, .98, .95, TRUE);
         cairo_new_path(cr);
         cairo_move_to(cr, 114, 79);
@@ -406,12 +423,12 @@ static void motion_screen(cairo_t *cr, const wupstream_input_t *in,
         cairo_set_line_width(cr, .8);
         cairo_stroke(cr);
 
-        label(cr, "GYRO (deg/s)", 120, 92, 9, TRUE,
+        label(cr, pad_word(cr,1,"GYRO (deg/s)"), 120, 92, 9, TRUE,
               .71, .81, .91, .96, FALSE);
         gyro_gauge(cr, "X", 0, 109, FALSE);
         gyro_gauge(cr, "Y", 0, 132, FALSE);
         gyro_gauge(cr, "Z", 0, 155, FALSE);
-        label(cr, "TOUCH", 302, 92, 9, TRUE,
+        label(cr, pad_word(cr,2,"TOUCH"), 302, 92, 9, TRUE,
               .71, .81, .91, .96, TRUE);
         round_path(cr, 278, 100, 49, 28, 2.5);
         rgba(cr, .08, .16, .24, .96);
@@ -421,7 +438,7 @@ static void motion_screen(cairo_t *cr, const wupstream_input_t *in,
         cairo_stroke(cr);
         label(cr, "--", 302, 143, 8, FALSE,
               .58, .68, .78, 1, TRUE);
-        label(cr, "Start stream to read sensors", 220, 176, 9, FALSE,
+        label(cr, pad_word(cr,3,"Start stream to read sensors"), 220, 176, 9, FALSE,
               .60, .73, .86, 1, TRUE);
         return;
     }
@@ -429,7 +446,7 @@ static void motion_screen(cairo_t *cr, const wupstream_input_t *in,
     circle_path(cr, 117, 70, 3);
     accent_color(cr, 1);
     cairo_fill(cr);
-    label(cr, "WUP / LIVE INPUT", 126, 73, 9, TRUE,
+    label(cr, pad_word(cr,4,"WUP / LIVE INPUT"), 126, 73, 9, TRUE,
           .78, .88, .97, .95, FALSE);
 
     char buf[72];
@@ -446,7 +463,7 @@ static void motion_screen(cairo_t *cr, const wupstream_input_t *in,
     cairo_set_line_width(cr, .8);
     cairo_stroke(cr);
 
-    label(cr, "GYRO (deg/s)", 120, 92, 9, TRUE,
+    label(cr, pad_word(cr,1,"GYRO (deg/s)"), 120, 92, 9, TRUE,
           .71, .81, .91, .96, FALSE);
     gyro_gauge(cr, "X", in->gyro[0], 109, TRUE);
     gyro_gauge(cr, "Y", in->gyro[1], 132, TRUE);
@@ -454,7 +471,7 @@ static void motion_screen(cairo_t *cr, const wupstream_input_t *in,
 
     /* Miniature touchscreen, independent of the gyroscope gauges.
        The GamePad touch range is 854 x 480 (coordinate 0..853, 0..479). */
-    label(cr, "TOUCH", 302, 92, 9, TRUE, .71, .81, .91, .96, TRUE);
+    label(cr, pad_word(cr,2,"TOUCH"), 302, 92, 9, TRUE, .71, .81, .91, .96, TRUE);
     const double sx = 278, sy = 100, sw = 49, sh = 28;
     round_path(cr, sx, sy, sw, sh, 2.5);
     rgba(cr, .08, .16, .24, .96);
@@ -478,7 +495,7 @@ static void motion_screen(cairo_t *cr, const wupstream_input_t *in,
     label(cr, buf, 302, 143, 8, FALSE, .80, .90, .98, .90, TRUE);
 
     /* Accelerometer: signed g values, without an artificial horizon. */
-    label(cr, "ACCEL (g)", 278, 163, 8.3, TRUE,
+    label(cr, pad_word(cr,5,"ACCEL (g)"), 278, 163, 8.3, TRUE,
           .65, .76, .87, .9, TRUE);
     snprintf(buf, sizeof buf, "X%+.1f Y%+.1f Z%+.1f",
              in->accel[0] / 8200.0,
