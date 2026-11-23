@@ -730,6 +730,8 @@ static GtkWidget *build_source_section(ui_t *u) {
     GtkWidget *tv_image = tv_pixbuf ?
         gtk_image_new_from_pixbuf(tv_pixbuf) : mk_label("TV");
     if (tv_pixbuf) g_object_unref(tv_pixbuf);
+    GtkWidget *press_label = mk_label("Press");
+    gtk_box_pack_start(GTK_BOX(stream_row), press_label, FALSE, FALSE, 0);
     gtk_widget_set_size_request(tv_image, 22, 22);
     gtk_box_pack_start(GTK_BOX(stream_row), tv_image, FALSE, FALSE, 0);
     GtkWidget *tv_hint = mk_label("to cycle between screens");
@@ -1972,7 +1974,7 @@ ui_t *ui_new(settings_t *s, server_t *srv) {
             g_object_unref(ic);
         }
     }
-    gtk_window_set_default_size(GTK_WINDOW(u->window), 960, 698);
+    gtk_window_set_default_size(GTK_WINDOW(u->window), 960, 703);
     g_signal_connect(u->window, "delete-event", G_CALLBACK(gtk_widget_hide_on_delete), NULL);
     gtk_widget_set_size_request(u->window, 680, 530);
 
