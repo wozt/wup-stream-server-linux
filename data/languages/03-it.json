@@ -130,6 +130,8 @@
     "Accepted: Ctrl/Control, Alt, Shift, Super/Win/Meta.": "Modificatori ammessi: Ctrl/Control, Alt, Shift, Super/Win/Meta.",
     "Empty field means unassigned.": "Campo vuoto: comando non assegnato.",
     "Save button and stick direction mappings per application.": "Salva pulsanti e direzioni degli stick in un profilo per applicazione.",
-    "Stored in settings.json.": "I profili sono salvati in settings.json."
+    "Stored in settings.json.": "I profili sono salvati in settings.json.",
+    "Clear selection": "Cancella selezione",
+    "Clear the selected region and show black while streaming": "Cancella l'area selezionata e mostra uno schermo nero durante lo streaming"
   }
 }

@@ -130,6 +130,8 @@
     "Accepted: Ctrl/Control, Alt, Shift, Super/Win/Meta.": "Erlaubt: Ctrl/Control, Alt, Shift, Super/Win/Meta.",
     "Empty field means unassigned.": "Leeres Feld bedeutet: nicht belegt.",
     "Save button and stick direction mappings per application.": "Tasten und Stickrichtungen pro Anwendung als Profil speichern.",
-    "Stored in settings.json.": "Profile werden in settings.json gespeichert."
+    "Stored in settings.json.": "Profile werden in settings.json gespeichert.",
+    "Clear selection": "Auswahl löschen",
+    "Clear the selected region and show black while streaming": "Bereichsauswahl löschen und während des Streams Schwarz anzeigen"
   }
 }

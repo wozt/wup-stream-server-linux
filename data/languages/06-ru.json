@@ -130,6 +130,8 @@
     "Accepted: Ctrl/Control, Alt, Shift, Super/Win/Meta.": "Модификаторы: Ctrl/Control, Alt, Shift, Super/Win/Meta.",
     "Empty field means unassigned.": "Пустое поле означает отсутствие назначения.",
     "Save button and stick direction mappings per application.": "Сохраняйте кнопки и направления стиков в профиле для приложения.",
-    "Stored in settings.json.": "Профили сохраняются в settings.json."
+    "Stored in settings.json.": "Профили сохраняются в settings.json.",
+    "Clear selection": "Очистить выделение",
+    "Clear the selected region and show black while streaming": "Удалить выбранную область и показывать чёрный экран во время трансляции"
   }
 }

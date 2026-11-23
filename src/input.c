@@ -477,11 +477,23 @@ void input_dispatch(input_ctx_t *ctx, const settings_t *s, const wupstream_input
         ctx->pad_volume = in->volume;
         if (t - ctx->vol_last > 0.25) {
             ctx->vol_last = t;
-            char cmd[192];
+            /* GLib's spawn parser is NOT a shell: $(...) and 2>&1
+             * were passed literally to pactl, causing its volume error.
+             * @DEFAULT_SINK@ is supported natively by pactl. */
             int pct = in->volume * 100 / 255;
-            snprintf(cmd, sizeof cmd,
-                     "pactl set-sink-volume $(pactl get-default-sink) %d%% >/dev/null 2>&1", pct);
-            g_spawn_command_line_async(cmd, NULL);
+            if (pct < 0) pct = 0;
+            if (pct > 100) pct = 100;
+            char value[16];
+            snprintf(value, sizeof value, "%d%%", pct);
+            gchar *argv[] = {"pactl", "set-sink-volume", "@DEFAULT_SINK@", value, NULL};
+            GError *error = NULL;
+            if (!g_spawn_async(NULL, argv, NULL,
+                    G_SPAWN_SEARCH_PATH | G_SPAWN_STDOUT_TO_DEV_NULL |
+                    G_SPAWN_STDERR_TO_DEV_NULL,
+                    NULL, NULL, NULL, &error)) {
+                g_warning("Cannot launch pactl: %s", error->message);
+                g_clear_error(&error);
+            }
         }
     }
 

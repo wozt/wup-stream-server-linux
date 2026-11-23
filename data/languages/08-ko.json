@@ -130,6 +130,8 @@
     "Accepted: Ctrl/Control, Alt, Shift, Super/Win/Meta.": "사용 가능한 조합 키: Ctrl/Control, Alt, Shift, Super/Win/Meta.",
     "Empty field means unassigned.": "빈 칸은 해당 입력을 할당하지 않습니다.",
     "Save button and stick direction mappings per application.": "버튼 및 스틱 방향을 앱별 프리셋으로 저장합니다.",
-    "Stored in settings.json.": "프리셋은 settings.json에 저장됩니다."
+    "Stored in settings.json.": "프리셋은 settings.json에 저장됩니다.",
+    "Clear selection": "선택 영역 지우기",
+    "Clear the selected region and show black while streaming": "선택한 영역을 지우고 스트리밍 중 검은 화면을 표시합니다"
   }
 }

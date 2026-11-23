@@ -119,6 +119,13 @@ static void cycle_monitor(server_t *srv, settings_t *s) {
     set_status(srv, "monitor: %s", screens[nxt].name);
 }
 
+/* WUP_V95_CLEAR_REGION: no selected pixels is an intentional black
+ * frame, not a capture failure. Keep the encoder and input path running. */
+static int region_is_cleared(const settings_t *s) {
+    return s->source_type == SRC_REGION &&
+           (s->source.w <= 0 || s->source.h <= 0);
+}
+
 /* start capture with retries; returns 0 on success */
 static int capture_start_retry(capture_t *cap, const settings_t *s, server_t *srv) {
     for (int i = 0; i < SESSION_CAP_TRIES && srv->running && srv->want_stream; i++) {
@@ -166,6 +173,9 @@ static void *server_thread(void *arg) {
         if (s->gamepad_only) {
             build_test_frame(frame);
             static_ok = 1;
+        } else if (region_is_cleared(s)) {
+            memset(frame, 0, FW * FH * 4);
+            set_status(srv, "region cleared: black screen");
         } else if (capture_start_retry(&cap, s, srv) == 0)
             cap_ok = 1;
         else {
@@ -201,8 +211,12 @@ static void *server_thread(void *arg) {
             if (rst) {
                 cap_fails = 0;
                 capture_stop(&cap);
-                cap_ok = (capture_start(&cap, s) == 0);
-                if (!cap_ok) cap_fails = 1;
+                /* An intentionally cleared region does not call XGetImage
+                 * or retry capture. Video switches to black immediately. */
+                cap_ok = !s->gamepad_only && !region_is_cleared(s) &&
+                         (capture_start(&cap, s) == 0);
+                if (!cap_ok && !s->gamepad_only && !region_is_cleared(s))
+                    cap_fails = 1;
             }
             if (rlk && ictx) input_reload_keys(ictx, s);
             if (cg && ictx) { input_calib_start(ictx); set_status(srv, "gyro calibration: keep the pad flat and still..."); }
@@ -215,6 +229,13 @@ static void *server_thread(void *arg) {
                     else build_test_frame(frame);
                     static_ok = 1;
                 }
+            } else if (region_is_cleared(s)) {
+                /* Live fallback: still transmit frames, audio and inputs.
+                 * Never count this as a failed capture or drop the pad. */
+                if (cap_ok) { capture_stop(&cap); cap_ok = 0; }
+                memset(frame, 0, FW * FH * 4);
+                static_ok = 0;
+                cap_fails = 0;
             } else {
                 static_ok = 0;
                 /* capture dead or failing: restart capture only, keep pad session */

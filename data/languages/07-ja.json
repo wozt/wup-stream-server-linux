@@ -130,6 +130,8 @@
     "Accepted: Ctrl/Control, Alt, Shift, Super/Win/Meta.": "使用可能な修飾キー: Ctrl/Control、Alt、Shift、Super/Win/Meta。",
     "Empty field means unassigned.": "空欄の項目には割り当てません。",
     "Save button and stick direction mappings per application.": "ボタンとスティック方向をアプリごとのプリセットに保存します。",
-    "Stored in settings.json.": "プリセットは settings.json に保存されます。"
+    "Stored in settings.json.": "プリセットは settings.json に保存されます。",
+    "Clear selection": "選択を解除",
+    "Clear the selected region and show black while streaming": "選択した領域を消去し、配信中は黒い画面を表示します"
   }
 }

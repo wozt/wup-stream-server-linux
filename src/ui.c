@@ -681,6 +681,23 @@ static void on_region_clicked(GtkButton *b, ui_t *u) {
     g_timeout_add(180, region_start_cb, r);
 }
 
+/* WUP_V95_CLEAR_REGION: unset the saved rectangle and display a black
+ * frame while keeping the GamePad stream/session active. The source combo
+ * change already requests the capture restart and saves the settings. */
+static void on_region_clear_clicked(GtkButton *b, ui_t *u) {
+    (void)b;
+    if (u->region_picking) return;
+    u->s->source.x = 0;
+    u->s->source.y = 0;
+    u->s->source.w = 0;
+    u->s->source.h = 0;
+    gtk_label_set_text(GTK_LABEL(u->region_lbl), "");
+    if (u->s->source_type != SRC_REGION)
+        gtk_combo_box_set_active(GTK_COMBO_BOX(u->src_combo), SRC_REGION);
+    else
+        commit_capture(u);
+}
+
 static void on_src_type_changed(GtkComboBox *cb, ui_t *u) {
     u->s->source_type = gtk_combo_box_get_active(cb);
     gtk_widget_set_sensitive(u->scr_row, u->s->source_type == SRC_SCREEN);
@@ -768,6 +785,12 @@ static GtkWidget *build_source_section(ui_t *u) {
     gtk_widget_set_tooltip_text(select, "Draw a capture rectangle on the desktop (Esc cancels)");
     g_signal_connect(select, "clicked", G_CALLBACK(on_region_clicked), u);
     gtk_box_pack_start(GTK_BOX(u->region_box), select, FALSE, FALSE, 0);
+    GtkWidget *clear = gtk_button_new_with_label("Clear selection");
+    button_symbol(clear, "edit-clear-symbolic");
+    gtk_widget_set_tooltip_text(clear,
+        "Clear the selected region and show black while streaming");
+    g_signal_connect(clear, "clicked", G_CALLBACK(on_region_clear_clicked), u);
+    gtk_box_pack_start(GTK_BOX(u->region_box), clear, FALSE, FALSE, 0);
     u->region_lbl = gtk_label_new("");
     gtk_label_set_xalign(GTK_LABEL(u->region_lbl), 0);
     if (u->s->source.w > 0 && u->s->source.h > 0) {

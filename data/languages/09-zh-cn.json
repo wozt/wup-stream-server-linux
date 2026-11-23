@@ -130,6 +130,8 @@
     "Accepted: Ctrl/Control, Alt, Shift, Super/Win/Meta.": "支持的修饰键：Ctrl/Control、Alt、Shift、Super/Win/Meta。",
     "Empty field means unassigned.": "留空表示不分配按键。",
     "Save button and stick direction mappings per application.": "可按应用保存按钮及摇杆方向映射。",
-    "Stored in settings.json.": "预设保存在 settings.json 中。"
+    "Stored in settings.json.": "预设保存在 settings.json 中。",
+    "Clear selection": "清除选区",
+    "Clear the selected region and show black while streaming": "清除所选区域，并在串流时显示黑屏"
   }
 }
