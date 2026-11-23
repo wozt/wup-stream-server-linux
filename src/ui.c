@@ -482,6 +482,18 @@ static GtkWidget *mk_label(const char *t) {
     return l;
 }
 
+/* WUP_V99_COMPACT_CHECK_HITBOX: a GtkCheckButton can receive all the empty
+ * horizontal space in a box. Its WHOLE allocation then toggles on a click,
+ * even far beyond the visible check glyph and label. Restrict every checkbox
+ * to its natural width, without changing its label, styling or callbacks. */
+static GtkWidget *wup_compact_check(const char *label) {
+    GtkWidget *check = gtk_check_button_new_with_label(label);
+    gtk_widget_set_halign(check, GTK_ALIGN_START);
+    gtk_widget_set_hexpand(check, FALSE);
+    gtk_widget_set_vexpand(check, FALSE);
+    return check;
+}
+
 /* WUP_V3_MODERN_DENSE_UI: symbolic icons use the system GTK theme (no PNG dependencies).
  * A small text fallback keeps controls usable with minimal icon themes. */
 static gboolean has_symbol(const char *name) {
@@ -991,12 +1003,12 @@ static GtkWidget *build_quality_section(ui_t *u) {
 
     GtkWidget *line = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
     gtk_box_pack_start(GTK_BOX(sec), line, FALSE, FALSE, 0);
-    u->lowlat_chk = gtk_check_button_new_with_label("Low latency");
+    u->lowlat_chk = wup_compact_check("Low latency");
     gtk_widget_set_tooltip_text(u->lowlat_chk,
         "x264 zerolatency: no lookahead, no B-frames");
     gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(u->lowlat_chk), u->s->low_latency);
     g_signal_connect(u->lowlat_chk, "toggled", G_CALLBACK(on_lowlat_toggled), u);
-    gtk_box_pack_start(GTK_BOX(line), u->lowlat_chk, TRUE, TRUE, 0);
+    gtk_box_pack_start(GTK_BOX(line), u->lowlat_chk, FALSE, FALSE, 0);
 
     GtkWidget *sbtn = gtk_button_new_with_label("Save preset");
     gtk_widget_set_tooltip_text(sbtn, "Save quality settings as a named preset");
@@ -1432,7 +1444,7 @@ static GtkWidget *build_input_section(ui_t *u) {
         u->dz_spin = mk_spin(0, 500, u->s->input.deadzone);
         g_signal_connect(u->dz_spin, "value-changed", G_CALLBACK(on_input_spin), u);
         gtk_box_pack_start(GTK_BOX(padopts), u->dz_spin, FALSE, FALSE, 0);
-        u->invert_chk = gtk_check_button_new_with_label("Invert Y");
+        u->invert_chk = wup_compact_check("Invert Y");
         gtk_widget_set_tooltip_text(u->invert_chk, "Invert GamePad stick Y axis");
         gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(u->invert_chk), u->s->input.invert_y);
         g_signal_connect(u->invert_chk, "toggled", G_CALLBACK(on_input_toggled), u);
@@ -1447,7 +1459,7 @@ static GtkWidget *build_input_section(ui_t *u) {
     GtkWidget *kb = mk_section("Keyboard + mouse");
     gtk_box_pack_start(GTK_BOX(cols), frame_of(kb), TRUE, TRUE, 0);
     {
-        u->rstick_chk = gtk_check_button_new_with_label("Right stick = mouse");
+        u->rstick_chk = wup_compact_check("Right stick = mouse");
         gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(u->rstick_chk), u->s->input.right_stick_mouse);
         g_signal_connect(u->rstick_chk, "toggled", G_CALLBACK(on_input_toggled), u);
         gtk_box_pack_start(GTK_BOX(kb), u->rstick_chk, FALSE, FALSE, 0);
@@ -1534,13 +1546,13 @@ static GtkWidget *build_input_section(ui_t *u) {
     {
         GtkWidget *line = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
         gtk_box_pack_start(GTK_BOX(sh), line, FALSE, FALSE, 0);
-        u->touch_chk = gtk_check_button_new_with_label("Touch -> mouse");
+        u->touch_chk = wup_compact_check("Touch -> mouse");
         gtk_widget_set_tooltip_text(u->touch_chk,
             "Use the GamePad touchscreen as a mouse, including in virtual gamepad mode");
         gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(u->touch_chk),
                                      u->s->input.touch_as_mouse);
         g_signal_connect(u->touch_chk, "toggled", G_CALLBACK(on_input_toggled), u);
-        gtk_box_pack_start(GTK_BOX(line), u->touch_chk, TRUE, TRUE, 0);
+        gtk_box_pack_start(GTK_BOX(line), u->touch_chk, FALSE, FALSE, 0);
 
         gtk_box_pack_start(GTK_BOX(line), mk_label("Gyro:"), FALSE, FALSE, 0);
         u->gyro_combo = gtk_combo_box_text_new();
@@ -1651,17 +1663,17 @@ static GtkWidget *build_audio_section(ui_t *u) {
     gtk_box_pack_start(GTK_BOX(sec), audio_top, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(audio_top), audio_left, TRUE, TRUE, 0);
 
-    u->aout_chk = gtk_check_button_new_with_label("Send PC audio to GamePad");
+    u->aout_chk = wup_compact_check("Send PC audio to GamePad");
     gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(u->aout_chk), u->s->audio_pc_to_pad);
     g_signal_connect(u->aout_chk, "toggled", G_CALLBACK(on_audio_toggled), u);
     gtk_box_pack_start(GTK_BOX(audio_left), u->aout_chk, FALSE, FALSE, 0);
 
-    u->ain_chk = gtk_check_button_new_with_label("Send GamePad microphone to PC");
+    u->ain_chk = wup_compact_check("Send GamePad microphone to PC");
     gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(u->ain_chk), u->s->audio_pad_to_pc);
     g_signal_connect(u->ain_chk, "toggled", G_CALLBACK(on_audio_toggled), u);
     gtk_box_pack_start(GTK_BOX(audio_left), u->ain_chk, FALSE, FALSE, 0);
 
-    GtkWidget *pad_vol = gtk_check_button_new_with_label("GamePad slider → PC volume");
+    GtkWidget *pad_vol = wup_compact_check("GamePad slider → PC volume");
     gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(pad_vol),
                                  u->s->pad_volume_controls_pc);
     gtk_widget_set_tooltip_text(pad_vol,
@@ -1735,7 +1747,7 @@ static GtkWidget *build_conn_section(ui_t *u) {
     g_signal_connect(u->ip_entry, "changed", G_CALLBACK(on_ip_changed), u);
     gtk_box_pack_start(GTK_BOX(line1), u->ip_entry, FALSE, FALSE, 0);
 
-    u->autostart_chk = gtk_check_button_new_with_label("Auto-start");
+    u->autostart_chk = wup_compact_check("Auto-start");
     gtk_widget_set_tooltip_text(u->autostart_chk,
         "Start the stream automatically when the application opens");
     gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(u->autostart_chk),
@@ -1745,14 +1757,14 @@ static GtkWidget *build_conn_section(ui_t *u) {
 
     GtkWidget *line2 = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
     gtk_box_pack_start(GTK_BOX(sec), line2, FALSE, FALSE, 0);
-    GtkWidget *gponly_chk = gtk_check_button_new_with_label("GamePad-only mode");
+    GtkWidget *gponly_chk = wup_compact_check("GamePad-only mode");
     gtk_widget_set_tooltip_text(gponly_chk,
         "Keep GamePad inputs live with no PC video capture. Useful for calibration.");
     gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(gponly_chk), u->s->gamepad_only);
     g_signal_connect(gponly_chk, "toggled", G_CALLBACK(on_gamepad_only_toggled), u);
     gtk_box_pack_start(GTK_BOX(line2), gponly_chk, FALSE, FALSE, 0);
 
-    u->black_chk = gtk_check_button_new_with_label("Black screen");
+    u->black_chk = wup_compact_check("Black screen");
     gtk_widget_set_tooltip_text(u->black_chk,
         "Show black instead of the test image in GamePad-only mode");
     gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(u->black_chk),
