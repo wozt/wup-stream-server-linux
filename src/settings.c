@@ -1,0 +1,246 @@
+#include "settings.h"
+#include <stdio.h>
+#include <string.h>
+#include <sys/stat.h>
+
+#define CFG_DIR ".config/wup-stream-serveur"
+#define CFG_FILE "settings.json"
+
+const char *settings_path(void) {
+    static char path[512];
+    const char *home = g_get_home_dir();
+    snprintf(path, sizeof path, "%s/" CFG_DIR "/" CFG_FILE, home);
+    return path;
+}
+
+/* default kbmouse mapping: A B X Y -> z x c v, dpad -> arrows,
+   L R -> shift ctrl, ZL ZR -> a s, +/- -> -, =, home->Escape, sticks->mouse, L3/R3 -> e q */
+static const char *defkeys[18] = {
+    "z", "x", "c", "v",                       /* A B X Y */
+    "Left", "Right", "Up", "Down",            /* dpad */
+    "a", "s",                                 /* ZL ZR */
+    "Shift_L", "Control_L",                   /* L R */
+    "minus", "equal",                         /* +/- */
+    "Escape",                                 /* HOME */
+    "e", "q",                                 /* L3 R3 */
+    "F1",                                     /* TV */
+};
+
+void settings_defaults(settings_t *s) {
+    memset(s, 0, sizeof *s);
+    s->source_type = SRC_SCREEN;
+    s->aspect = ASPECT_LETTERBOX;
+    s->crf = 18;
+    s->kbps = 10000;
+    s->audio_pc_to_pad = 1;
+    s->audio_pad_to_pc = 0;
+    s->low_latency = 1;
+    snprintf(s->audio_monitor, sizeof s->audio_monitor, "default");
+    s->input.mode = INMODE_GAMEPAD;
+    s->input.deadzone = 120;
+    s->input.sensitivity = 100;
+    s->input.gyro_mode = GYRO_OFF;
+    s->input.gyro_sens = 100;
+    s->input.touch_as_mouse = 1;
+    s->input.right_stick_mouse = 1;
+    for (int i = 0; i < 18; i++)
+        snprintf(s->input.keys[i], sizeof s->input.keys[i], "%s", defkeys[i]);
+    {
+        static const char *dsk[8] = {"a","d","w","s","Left","Right","Up","Down"};
+        for (int i = 0; i < 8; i++)
+            snprintf(s->input.stick_keys[i], sizeof s->input.stick_keys[i], "%s", dsk[i]);
+    }
+    s->npresets = 3;
+    struct { const char *n; int crf, kbps, gop; } dp[] = {
+        {"Economy", 23, 4000, 120},
+        {"Balanced", 18, 10000, 60},
+        {"Max", 14, 20000, 30},
+    };
+    for (int i = 0; i < 3; i++) {
+        snprintf(s->presets[i].name, 64, "%s", dp[i].n);
+        s->presets[i].crf = dp[i].crf;
+        s->presets[i].kbps = dp[i].kbps;
+        s->presets[i].gop = dp[i].gop;
+    }
+    snprintf(s->preset_name, sizeof s->preset_name, "Balanced");
+}
+
+static void json_str(JsonObject *o, const char *k, char *dst, size_t n) {
+    const char *v = json_object_get_string_member_with_default(o, k, "");
+    if (v) snprintf(dst, n, "%s", v);
+}
+static int json_int(JsonObject *o, const char *k, int d) {
+    return json_object_has_member(o, k)
+        ? (int)json_object_get_int_member(o, k) : d;
+}
+static JsonObject *json_obj(JsonObject *o, const char *k) {
+    return json_object_has_member(o, k) ? json_object_get_object_member(o, k) : NULL;
+}
+static JsonArray *json_arr(JsonObject *o, const char *k) {
+    return json_object_has_member(o, k) ? json_object_get_array_member(o, k) : NULL;
+}
+
+settings_t *settings_load(void) {
+    settings_t *s = g_new0(settings_t, 1);
+    settings_defaults(s);
+    char *data = NULL;
+    gsize len = 0;
+    if (!g_file_get_contents(settings_path(), &data, &len, NULL))
+        return s;
+    JsonParser *p = json_parser_new();
+    if (!json_parser_load_from_data(p, data, len, NULL)) {
+        g_object_unref(p); g_free(data); return s;
+    }
+    JsonNode *root_node = json_parser_get_root(p);
+    if (!root_node || !JSON_NODE_HOLDS_OBJECT(root_node)) { g_object_unref(p); g_free(data); return s; }
+    JsonObject *root = json_node_get_object(root_node);
+
+    json_str(root, "pad_ip", s->pad_ip, sizeof s->pad_ip);
+    s->source_type = json_int(root, "source_type", s->source_type);
+    s->aspect = json_int(root, "aspect", s->aspect);
+    json_str(root, "preset_name", s->preset_name, sizeof s->preset_name);
+    s->custom_quality = json_int(root, "custom_quality", 0);
+    s->low_latency = json_int(root, "low_latency", 1);
+    s->crf = json_int(root, "crf", s->crf);
+    s->kbps = json_int(root, "kbps", s->kbps);
+    s->gop = json_int(root, "gop", s->gop);
+    s->audio_pc_to_pad = json_int(root, "audio_pc_to_pad", s->audio_pc_to_pad);
+    s->audio_pad_to_pc = json_int(root, "audio_pad_to_pc", s->audio_pad_to_pc);
+    s->gamepad_only = json_int(root, "gamepad_only", 0);
+    s->gamepad_only_black = json_int(root, "gamepad_only_black", 0);
+    json_str(root, "audio_monitor", s->audio_monitor, sizeof s->audio_monitor);
+    s->autostart_stream = json_int(root, "autostart_stream", 0);
+
+    JsonObject *src = json_obj(root, "source");
+    if (src) {
+        json_str(src, "output", s->source.output, sizeof s->source.output);
+        json_str(src, "window_class", s->source.window_class, sizeof s->source.window_class);
+        s->source.window_id = json_int(src, "window_id", 0);
+        s->source.x = json_int(src, "x", 0);
+        s->source.y = json_int(src, "y", 0);
+        s->source.w = json_int(src, "w", 0);
+        s->source.h = json_int(src, "h", 0);
+    }
+    JsonObject *in = json_obj(root, "input");
+    if (in) {
+        s->input.mode = json_int(in, "mode", s->input.mode);
+        s->input.deadzone = json_int(in, "deadzone", s->input.deadzone);
+        s->input.sensitivity = json_int(in, "sensitivity", s->input.sensitivity);
+        s->input.invert_y = json_int(in, "invert_y", 0);
+        s->input.gyro_mode = json_int(in, "gyro_mode", s->input.gyro_mode);
+        s->input.gyro_sens = json_int(in, "gyro_sens", s->input.gyro_sens);
+        if (json_object_has_member(in, "gyro_bias")) {
+            JsonArray *gb = json_arr(in, "gyro_bias");
+            if (gb)
+                for (int i = 0; i < 3 && i < json_array_get_length(gb); i++)
+                    s->input.gyro_bias[i] = json_array_get_double_element(gb, i);
+        }
+        s->input.touch_as_mouse = json_int(in, "touch_as_mouse", s->input.touch_as_mouse);
+        s->input.right_stick_mouse = json_int(in, "right_stick_mouse", s->input.right_stick_mouse);
+        JsonArray *keys = json_arr(in, "keys");
+        if (keys) {
+            for (int i = 0; i < 18 && i < json_array_get_length(keys); i++) {
+                const char *v = json_array_get_string_element(keys, i);
+                if (v) snprintf(s->input.keys[i], 32, "%s", v);
+            }
+        }
+        JsonArray *skeys = json_arr(in, "stick_keys");
+        if (skeys) {
+            for (int i = 0; i < 8 && i < json_array_get_length(skeys); i++) {
+                const char *v = json_array_get_string_element(skeys, i);
+                if (v) snprintf(s->input.stick_keys[i], 32, "%s", v);
+            }
+        }
+    }
+    JsonArray *pres = json_arr(root, "presets");
+    if (pres) {
+        int n = json_array_get_length(pres);
+        if (n > 8) n = 8;
+        for (int i = 0; i < n; i++) {
+            JsonObject *po = json_array_get_object_element(pres, i);
+            snprintf(s->presets[i].name, 64, "%s",
+                     json_object_get_string_member_with_default(po, "name", ""));
+            s->presets[i].crf = json_int(po, "crf", 18);
+            s->presets[i].kbps = json_int(po, "kbps", 10000);
+            s->presets[i].gop = json_int(po, "gop", 60);
+        }
+        s->npresets = n;
+    }
+    g_object_unref(p); g_free(data);
+    return s;
+}
+
+void settings_save(settings_t *s) {
+    JsonObject *root = json_object_new();
+    if (s->pad_ip[0]) json_object_set_string_member(root, "pad_ip", s->pad_ip);
+    json_object_set_int_member(root, "source_type", s->source_type);
+    json_object_set_int_member(root, "aspect", s->aspect);
+    json_object_set_string_member(root, "preset_name", s->preset_name);
+    json_object_set_int_member(root, "custom_quality", s->custom_quality);
+    json_object_set_int_member(root, "low_latency", s->low_latency);
+    json_object_set_int_member(root, "crf", s->crf);
+    json_object_set_int_member(root, "kbps", s->kbps);
+    json_object_set_int_member(root, "gop", s->gop);
+    json_object_set_int_member(root, "audio_pc_to_pad", s->audio_pc_to_pad);
+    json_object_set_int_member(root, "audio_pad_to_pc", s->audio_pad_to_pc);
+    json_object_set_int_member(root, "gamepad_only", s->gamepad_only);
+    json_object_set_int_member(root, "gamepad_only_black", s->gamepad_only_black);
+    json_object_set_string_member(root, "audio_monitor", s->audio_monitor);
+    json_object_set_int_member(root, "autostart_stream", s->autostart_stream);
+
+    JsonObject *src = json_object_new();
+    json_object_set_string_member(src, "output", s->source.output);
+    json_object_set_string_member(src, "window_class", s->source.window_class);
+    if (s->source.window_id) json_object_set_int_member(src, "window_id", s->source.window_id);
+    json_object_set_int_member(src, "x", s->source.x);
+    json_object_set_int_member(src, "y", s->source.y);
+    json_object_set_int_member(src, "w", s->source.w);
+    json_object_set_int_member(src, "h", s->source.h);
+    json_object_set_object_member(root, "source", src);
+
+    JsonObject *in = json_object_new();
+    json_object_set_int_member(in, "mode", s->input.mode);
+    json_object_set_int_member(in, "deadzone", s->input.deadzone);
+    json_object_set_int_member(in, "sensitivity", s->input.sensitivity);
+    json_object_set_int_member(in, "invert_y", s->input.invert_y);
+    json_object_set_int_member(in, "gyro_mode", s->input.gyro_mode);
+    json_object_set_int_member(in, "gyro_sens", s->input.gyro_sens);
+    JsonArray *gb = json_array_new();
+    for (int i = 0; i < 3; i++)
+        json_array_add_double_element(gb, s->input.gyro_bias[i]);
+    json_object_set_array_member(in, "gyro_bias", gb);
+    json_object_set_int_member(in, "touch_as_mouse", s->input.touch_as_mouse);
+    json_object_set_int_member(in, "right_stick_mouse", s->input.right_stick_mouse);
+    JsonArray *keys = json_array_new();
+    for (int i = 0; i < 18; i++)
+        json_array_add_string_element(keys, s->input.keys[i]);
+    json_object_set_array_member(in, "keys", keys);
+    JsonArray *skeys = json_array_new();
+    for (int i = 0; i < 8; i++)
+        json_array_add_string_element(skeys, s->input.stick_keys[i]);
+    json_object_set_array_member(in, "stick_keys", skeys);
+    json_object_set_object_member(root, "input", in);
+
+    JsonArray *pres = json_array_new();
+    for (int i = 0; i < s->npresets; i++) {
+        JsonObject *po = json_object_new();
+        json_object_set_string_member(po, "name", s->presets[i].name);
+        json_object_set_int_member(po, "crf", s->presets[i].crf);
+        json_object_set_int_member(po, "kbps", s->presets[i].kbps);
+        json_object_set_int_member(po, "gop", s->presets[i].gop);
+        json_array_add_object_element(pres, po);
+    }
+    json_object_set_array_member(root, "presets", pres);
+
+    char *dir = g_path_get_dirname(settings_path());
+    g_mkdir_with_parents(dir, 0700);
+    g_free(dir);
+    JsonGenerator *g = json_generator_new();
+    JsonNode *root_node = json_node_new(JSON_NODE_OBJECT);
+    json_node_take_object(root_node, root);
+    json_generator_take_root(g, root_node);
+    char *out = json_generator_to_data(g, NULL);
+    g_file_set_contents(settings_path(), out, -1, NULL);
+    g_free(out);
+    g_object_unref(g);
+}

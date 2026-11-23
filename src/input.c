@@ -1,0 +1,426 @@
+#include "input.h"
+#include "x11util.h"
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <fcntl.h>
+#include <errno.h>
+#include <math.h>
+#include <sys/ioctl.h>
+#include <time.h>
+#include <glib.h>
+#include <linux/uinput.h>
+#include <linux/input.h>
+
+const char *wbtn_names[WBTN_COUNT] = {
+    "A", "B", "X", "Y", "←", "→", "↑", "↓",
+    "ZL", "ZR", "L", "R", "+", "−", "⌂", "L3", "R3", "TV"
+};
+
+/* WUPSTREAM_* bit per button index */
+static const uint32_t wbtn_bit[WBTN_COUNT] = {
+    WUPSTREAM_A, WUPSTREAM_B, WUPSTREAM_X, WUPSTREAM_Y,
+    WUPSTREAM_LEFT, WUPSTREAM_RIGHT, WUPSTREAM_UP, WUPSTREAM_DOWN,
+    WUPSTREAM_ZL, WUPSTREAM_ZR, WUPSTREAM_L, WUPSTREAM_R,
+    WUPSTREAM_PLUS, WUPSTREAM_MINUS, WUPSTREAM_HOME,
+    WUPSTREAM_L3, WUPSTREAM_R3, WUPSTREAM_TV
+};
+
+/* evdev codes per button index (gamepad mode) */
+static const uint16_t wbtn_evkey[WBTN_COUNT] = {
+    BTN_SOUTH, BTN_EAST, BTN_NORTH, BTN_WEST,          /* A B X Y (Nintendo layout) */
+    BTN_DPAD_LEFT, BTN_DPAD_RIGHT, BTN_DPAD_UP, BTN_DPAD_DOWN,
+    BTN_TL2, BTN_TR2,                                   /* ZL ZR analog triggers -> digital */
+    BTN_TL, BTN_TR,                                     /* L R shoulders */
+    BTN_START, BTN_SELECT,                              /* + - */
+    BTN_MODE,                                           /* HOME */
+    BTN_THUMBL, BTN_THUMBR,                             /* L3 R3 */
+    KEY_TV                                             /* TV */
+};
+
+struct input_ctx {
+    int uifd;                    /* -1 if not in gamepad mode */
+    Display *dpy;                /* XTest connection (kbmouse mode) */
+    uint32_t prev_buttons;
+    int prev_lx, prev_ly, prev_rx, prev_ry;
+    int prev_touched, prev_tx, prev_ty;
+    unsigned prev_stick_dirs;
+    int pad_volume;              /* last volume sent to PC */
+    double vol_last;             /* last time we spawned pactl */
+    /* mouse accumulators */
+    double mx, my;               /* pending relative motion */
+    double grx, gry;             /* gyro-integrated right stick */
+    int scr_w, scr_h;
+    /* gyro calibration */
+    double gyro_bias[3];
+    int calib_active, calib_done;
+    double calib_acc[3];
+    int calib_n;
+    /* touch gesture state machine */
+    double touch_t0;             /* when current touch started */
+    double touch_last_up;        /* when previous touch ended */
+    int touch_taps;              /* consecutive taps in the current burst */
+    int touch_gesture;           /* 0=undecided, 1=drag, 2=scroll, 3=rclick held */
+    int touch_ly;                /* last touch y for scroll deltas */
+    int touch_px, touch_py;      /* last warped pointer pos */
+};
+
+/* ---------- uinput virtual gamepad ---------- */
+
+static int uinput_open(void) {
+    int fd = open("/dev/uinput", O_WRONLY | O_NONBLOCK);
+    if (fd < 0) return -1;
+
+    ioctl(fd, UI_SET_EVBIT, EV_SYN);
+    ioctl(fd, UI_SET_EVBIT, EV_KEY);
+    ioctl(fd, UI_SET_EVBIT, EV_ABS);
+
+    static const uint16_t keys[] = {
+        BTN_SOUTH, BTN_EAST, BTN_NORTH, BTN_WEST,
+        BTN_DPAD_LEFT, BTN_DPAD_RIGHT, BTN_DPAD_UP, BTN_DPAD_DOWN,
+        BTN_TL2, BTN_TR2, BTN_TL, BTN_TR,
+        BTN_START, BTN_SELECT, BTN_MODE,
+        BTN_THUMBL, BTN_THUMBR, KEY_TV
+    };
+    for (size_t i = 0; i < sizeof(keys)/sizeof(keys[0]); i++)
+        ioctl(fd, UI_SET_KEYBIT, keys[i]);
+
+    static const uint16_t axes[] = { ABS_X, ABS_Y, ABS_RX, ABS_RY };
+    for (size_t i = 0; i < sizeof(axes)/sizeof(axes[0]); i++) {
+        ioctl(fd, UI_SET_ABSBIT, axes[i]);
+        struct uinput_abs_setup st;
+        memset(&st, 0, sizeof st);
+        st.code = axes[i];
+        st.absinfo.minimum = -32767;
+        st.absinfo.maximum = 32767;
+        ioctl(fd, UI_ABS_SETUP, &st);
+    }
+
+    struct uinput_user_dev ud;
+    memset(&ud, 0, sizeof ud);
+    snprintf(ud.name, UINPUT_MAX_NAME_SIZE, "Wii U GamePad (wupstreamd)");
+    ud.id.bustype = BUS_USB;
+    ud.id.vendor = 0x057e;   /* Nintendo */
+    ud.id.product = 0x2001;
+    ud.id.version = 1;
+    if (write(fd, &ud, sizeof ud) != (ssize_t)sizeof ud) { close(fd); return -1; }
+    if (ioctl(fd, UI_DEV_CREATE) != 0) { close(fd); return -1; }
+    return fd;
+}
+
+static void uinput_emit(input_ctx_t *ctx, int type, int code, int value) {
+    if (ctx->uifd < 0) return;
+    struct input_event ev = { .type = (uint16_t)type, .code = (uint16_t)code, .value = value };
+    write(ctx->uifd, &ev, sizeof ev);
+}
+
+static void uinput_syn(input_ctx_t *ctx) {
+    uinput_emit(ctx, EV_SYN, SYN_REPORT, 0);
+}
+
+static int scale_stick(int raw, int deadzone) {
+    if (abs(raw) < deadzone) return 0;
+    /* rescale so deadzone edge -> small value, full -> 32767 */
+    int v = raw * 32767 / 1100;
+    if (v > 32767) v = 32767;
+    if (v < -32767) v = -32767;
+    return v;
+}
+
+/* ---------- kb/mouse mode ---------- */
+
+static KeySym cached_keysym[WBTN_COUNT];
+static KeySym stick_keysym[8];
+static int keys_loaded = 0;
+
+static void load_keysyms(const input_cfg_t *cfg) {
+    if (keys_loaded) return;
+    for (int i = 0; i < WBTN_COUNT; i++)
+        cached_keysym[i] = xkeysym_for_name(cfg->keys[i]);
+    for (int i = 0; i < 8; i++)
+        stick_keysym[i] = xkeysym_for_name(cfg->stick_keys[i]);
+    keys_loaded = 1;
+}
+
+static void apply_keysyms(const input_cfg_t *cfg) {
+    for (int i = 0; i < WBTN_COUNT; i++)
+        cached_keysym[i] = xkeysym_for_name(cfg->keys[i]);
+    for (int i = 0; i < 8; i++)
+        stick_keysym[i] = xkeysym_for_name(cfg->stick_keys[i]);
+}
+
+void input_reload_keys(input_ctx_t *ctx, const settings_t *s) {
+    (void)ctx;
+    apply_keysyms(&s->input);
+}
+
+int input_gamepad_ok(input_ctx_t *ctx) {
+    return ctx && ctx->uifd >= 0;
+}
+
+void input_calib_start(input_ctx_t *ctx) {
+    if (!ctx) return;
+    memset(ctx->calib_acc, 0, sizeof ctx->calib_acc);
+    ctx->calib_n = 0;
+    ctx->calib_done = 0;
+    ctx->calib_active = 1;
+}
+
+/* returns 1 when a fresh bias is available in out[] */
+int input_calib_poll(input_ctx_t *ctx, double out[3]) {
+    if (!ctx || !ctx->calib_done) return 0;
+    ctx->calib_done = 0;
+    memcpy(out, ctx->gyro_bias, sizeof ctx->gyro_bias);
+    return 1;
+}
+
+static void kb_buttons(input_ctx_t *ctx, const settings_t *s, uint32_t buttons) {
+    Display *d = ctx->dpy;
+    uint32_t changed = buttons ^ ctx->prev_buttons;
+    for (int i = 0; i < WBTN_COUNT; i++) {
+        if (!(changed & wbtn_bit[i])) continue;
+        KeySym ks = cached_keysym[i];
+        if (ks == NoSymbol) continue;
+        int down = (buttons & wbtn_bit[i]) != 0;
+        xtest_key(d, ks, down);
+    }
+}
+
+/* Wii U gamepad gyro: s24 raw, ~+-2000 dps full scale -> ~4194 raw per dps */
+#define GYRO_RAW_PER_DPS 4194.0
+/* ignore noise below ~0.3 dps */
+#define GYRO_DPS_DEADZONE 0.3
+/* mouse: pixels per second per dps at sens=100% */
+#define GYRO_MOUSE_PX_PER_S 900.0
+/* stick: stick units (of 32767) per dps at sens=100% */
+#define GYRO_STICK_PER_DPS 60.0
+#define CALIB_SAMPLES 180          /* ~3 s at 60 Hz */
+
+/* corrected + filtered gyro in deg/s; returns via out[3] */
+static void gyro_dps(const input_ctx_t *ctx, const wupstream_input_t *in, double out[3]) {
+    for (int i = 0; i < 3; i++) {
+        double r = (in->gyro[i] - ctx->gyro_bias[i]) / GYRO_RAW_PER_DPS;
+        if (fabs(r) < GYRO_DPS_DEADZONE) r = 0;
+        if (r > 2000) r = 2000;
+        if (r < -2000) r = -2000;
+        out[i] = r;
+    }
+}
+
+static double now_sec(void) {
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return ts.tv_sec + ts.tv_nsec / 1e9;
+}
+
+static void kb_pointer(input_ctx_t *ctx, const settings_t *s, const wupstream_input_t *in) {
+    Display *d = ctx->dpy;
+    const input_cfg_t *ic = &s->input;
+    int dz = ic->deadzone;
+
+    /* touch -> mouse gestures (available in both modes):
+       - quick tap            : left click
+       - long press (>450 ms) : right click
+       - 2nd tap + move       : drag & drop (button held while moving)
+       - 3rd tap + move       : scroll (vertical, follows finger) */
+    const double TAP_WIN = 0.40, LONG_PRESS = 0.45;
+    if (ic->touch_as_mouse && in->touched && !ctx->prev_touched) {
+        /* finger down */
+        int px = in->tx * ctx->scr_w / 853;
+        int py = in->ty * ctx->scr_h / 479;
+        xtest_warp(d, px, py);
+        ctx->touch_px = px; ctx->touch_py = py;
+        double t = now_sec();
+        ctx->touch_taps = (t - ctx->touch_last_up < TAP_WIN) ? ctx->touch_taps + 1 : 1;
+        ctx->touch_t0 = t;
+        ctx->touch_ly = in->ty;
+        ctx->touch_gesture = 0;
+        if (ctx->touch_taps >= 3) {
+            ctx->touch_gesture = 2;              /* scroll mode */
+            ctx->touch_taps = 0;
+        } else if (ctx->touch_taps == 2) {
+            ctx->touch_gesture = 1;              /* drag & drop */
+            xtest_button(d, 1, 1);
+        }
+        /* taps == 1: undecided until release or long-press timeout */
+    } else if (ic->touch_as_mouse && !in->touched && ctx->prev_touched) {
+        /* finger up */
+        double held = now_sec() - ctx->touch_t0;
+        if (ctx->touch_gesture == 1) {
+            xtest_button(d, 1, 0);               /* drop */
+        } else if (ctx->touch_gesture == 2) {
+            /* scroll mode ends */
+        } else if (ctx->touch_gesture == 3) {
+            xtest_button(d, 3, 0);               /* release right button */
+        } else if (held < LONG_PRESS) {
+            xtest_button(d, 1, 1);               /* tap = click */
+            xtest_button(d, 1, 0);
+        } else {
+            xtest_button(d, 3, 1);               /* long press = right click */
+            xtest_button(d, 3, 0);
+        }
+        ctx->touch_last_up = now_sec();
+        ctx->touch_gesture = 0;
+    } else if (ic->touch_as_mouse && in->touched) {
+        /* finger moving */
+        int px = in->tx * ctx->scr_w / 853;
+        int py = in->ty * ctx->scr_h / 479;
+        if (abs(px - ctx->touch_px) > 2 || abs(py - ctx->touch_py) > 2) {
+            xtest_warp(d, px, py);
+            ctx->touch_px = px; ctx->touch_py = py;
+        }
+        double t = now_sec();
+        if (ctx->touch_gesture == 0 && t - ctx->touch_t0 > LONG_PRESS) {
+            ctx->touch_gesture = 3;              /* long press engaged */
+            xtest_button(d, 3, 1);
+        } else if (ctx->touch_gesture == 2) {
+            int dy = in->ty - ctx->touch_ly;
+            while (dy > 24) { xtest_scroll(d, 5); dy -= 24; }
+            while (dy < -24) { xtest_scroll(d, 4); dy += 24; }
+            ctx->touch_ly = in->ty - dy;
+        }
+    }
+
+    /* right stick -> relative mouse (kb/mouse mode only) */
+    double sens = ic->sensitivity / 100.0;
+    if (ic->mode == INMODE_KBMOUSE && ic->right_stick_mouse) {
+        int rx = in->rx, ry = in->ry;
+        if (abs(rx) < dz) rx = 0;
+        if (abs(ry) < dz) ry = 0;
+        if (ic->invert_y) ry = -ry;
+        ctx->mx += rx * 0.9 * sens;
+        ctx->my += ry * 0.9 * sens;
+    }
+    /* gyro -> mouse (both modes): px/frame = dps * px_per_s / 60 */
+    if (ic->gyro_mode == GYRO_MOUSE ||
+        (ic->gyro_mode == GYRO_STICK && ic->mode == INMODE_KBMOUSE)) {
+        double g = ic->gyro_sens / 100.0;
+        double dps[3];
+        gyro_dps(ctx, in, dps);
+        ctx->mx += dps[0] * GYRO_MOUSE_PX_PER_S * g / 60.0;
+        ctx->my += dps[1] * GYRO_MOUSE_PX_PER_S * g / 60.0;
+    }
+    /* flush accumulated motion */
+    int dx = (int)ctx->mx, dy = (int)ctx->my;
+    ctx->mx -= dx; ctx->my -= dy;
+    if (dx || dy) xtest_motion(d, dx, dy);
+
+    ctx->prev_touched = in->touched;
+    ctx->prev_tx = in->tx; ctx->prev_ty = in->ty;
+}
+
+/* ---------- public ---------- */
+
+input_ctx_t *input_init(const settings_t *s) {
+    input_ctx_t *ctx = calloc(1, sizeof *ctx);
+    ctx->uifd = -1;
+    ctx->pad_volume = -1;
+    ctx->scr_w = 1920; ctx->scr_h = 1080;
+    memcpy(ctx->gyro_bias, s->input.gyro_bias, sizeof ctx->gyro_bias);
+    /* X display is needed for touch-as-mouse / gyro-mouse in BOTH modes */
+    ctx->dpy = XOpenDisplay(NULL);
+    if (ctx->dpy) {
+        ctx->scr_w = DisplayWidth(ctx->dpy, DefaultScreen(ctx->dpy));
+        ctx->scr_h = DisplayHeight(ctx->dpy, DefaultScreen(ctx->dpy));
+    }
+    if (s->input.mode == INMODE_GAMEPAD)
+        ctx->uifd = uinput_open();
+    else
+        load_keysyms(&s->input);
+    return ctx;
+}
+
+void input_free(input_ctx_t *ctx) {
+    if (!ctx) return;
+    if (ctx->uifd >= 0) {
+        ioctl(ctx->uifd, UI_DEV_DESTROY);
+        close(ctx->uifd);
+    }
+    if (ctx->dpy) XCloseDisplay(ctx->dpy);
+    free(ctx);
+}
+
+void input_dispatch(input_ctx_t *ctx, const settings_t *s, const wupstream_input_t *in) {
+    const input_cfg_t *ic = &s->input;
+    /* keymap may have been edited in the UI: reload cheaply each call? no —
+       apply_keysyms called by UI on change. cached here. */
+
+    /* pad volume -> PC volume: async spawn + 250ms debounce so the stream
+       thread never blocks on pactl */
+    if (in->volume >= 0 && in->volume != ctx->pad_volume) {
+        struct timespec now;
+        clock_gettime(CLOCK_MONOTONIC, &now);
+        double t = now.tv_sec + now.tv_nsec / 1e9;
+        ctx->pad_volume = in->volume;
+        if (t - ctx->vol_last > 0.25) {
+            ctx->vol_last = t;
+            char cmd[192];
+            int pct = in->volume * 100 / 255;
+            snprintf(cmd, sizeof cmd,
+                     "pactl set-sink-volume $(pactl get-default-sink) %d%% >/dev/null 2>&1", pct);
+            g_spawn_command_line_async(cmd, NULL);
+        }
+    }
+
+    uint32_t buttons = in->buttons;
+    int dz = ic->deadzone;
+
+    /* gyro calibration: average raw gyro while the pad is held still */
+    if (ctx->calib_active) {
+        for (int i = 0; i < 3; i++) ctx->calib_acc[i] += in->gyro[i];
+        if (++ctx->calib_n >= CALIB_SAMPLES) {
+            for (int i = 0; i < 3; i++)
+                ctx->gyro_bias[i] = ctx->calib_acc[i] / ctx->calib_n;
+            ctx->calib_active = 0;
+            ctx->calib_done = 1;
+        }
+    }
+    /* corrected gyro (bias removed, deg/s) */
+    double gyro[3];
+    gyro_dps(ctx, in, gyro);
+
+    if (ic->mode == INMODE_GAMEPAD) {
+        int changed = 0;
+        /* buttons */
+        uint32_t diff = buttons ^ ctx->prev_buttons;
+        for (int i = 0; i < WBTN_COUNT; i++) {
+            if (!(diff & wbtn_bit[i])) continue;
+            uinput_emit(ctx, EV_KEY, wbtn_evkey[i], (buttons & wbtn_bit[i]) ? 1 : 0);
+            changed = 1;
+        }
+        /* sticks */
+        int lx = scale_stick(in->lx, dz), ly = scale_stick(in->ly, dz);
+        int rx = scale_stick(in->rx, dz), ry = scale_stick(in->ry, dz);
+        if (ic->invert_y) { ly = -ly; ry = -ry; }
+        /* gyro -> right stick (gamepad mode): proportional to rotation speed */
+        if (ic->gyro_mode == GYRO_STICK) {
+            double g = ic->gyro_sens / 100.0;
+            int gx = (int)(gyro[0] * GYRO_STICK_PER_DPS * g);
+            int gy = (int)(gyro[1] * GYRO_STICK_PER_DPS * g);
+            rx += gx; ry += gy;
+            if (rx > 32767) rx = 32767; if (rx < -32767) rx = -32767;
+            if (ry > 32767) ry = 32767; if (ry < -32767) ry = -32767;
+        }
+        if (lx != ctx->prev_lx) { uinput_emit(ctx, EV_ABS, ABS_X, lx); changed = 1; }
+        if (ly != ctx->prev_ly) { uinput_emit(ctx, EV_ABS, ABS_Y, ly); changed = 1; }
+        if (rx != ctx->prev_rx) { uinput_emit(ctx, EV_ABS, ABS_RX, rx); changed = 1; }
+        if (ry != ctx->prev_ry) { uinput_emit(ctx, EV_ABS, ABS_RY, ry); changed = 1; }
+        if (changed || (buttons ^ ctx->prev_buttons)) uinput_syn(ctx);
+        ctx->prev_buttons = buttons;
+        ctx->prev_lx = lx; ctx->prev_ly = ly; ctx->prev_rx = rx; ctx->prev_ry = ry;
+    } else if (ctx->dpy) {
+        /* kb/mouse mode */
+        kb_buttons(ctx, s, buttons);
+        ctx->prev_buttons = buttons;
+        ctx->prev_lx = scale_stick(in->lx, dz);
+        ctx->prev_ly = scale_stick(in->ly, dz);
+        ctx->prev_rx = scale_stick(in->rx, dz);
+        ctx->prev_ry = scale_stick(in->ry, dz);
+    }
+
+    /* pointer features usable in BOTH modes: touch-as-mouse, gyro->mouse.
+       kb_pointer itself gates on the relevant flags. */
+    if (ctx->dpy && (ic->touch_as_mouse || ic->gyro_mode != GYRO_OFF))
+        kb_pointer(ctx, s, in);
+}

@@ -1,0 +1,65 @@
+#pragma once
+#include <json-glib/json-glib.h>
+
+/* Source kinds */
+enum { SRC_SCREEN, SRC_WINDOW, SRC_REGION };
+
+typedef struct {
+    char output[64];       /* xrandr output name for SRC_SCREEN */
+    char window_class[256];/* WM_CLASS for SRC_WINDOW (first of list match) */
+    unsigned long window_id;/* X window id for SRC_WINDOW */
+    int x, y, w, h;        /* geometry: region sel, or last known window geom */
+} source_t;
+
+typedef struct {
+    char name[64];
+    int crf;
+    int kbps;              /* max bitrate, 0 = lib default */
+    int gop;               /* frames between keyframes, 0 = auto */
+} quality_preset_t;
+
+enum { ASPECT_STRETCH, ASPECT_LETTERBOX, ASPECT_CROP };
+enum { INMODE_GAMEPAD, INMODE_KBMOUSE };
+enum { GYRO_OFF, GYRO_MOUSE, GYRO_STICK };
+
+typedef struct {
+    int mode;              /* INMODE_* */
+    int deadzone;          /* 0..500 raw stick units (~+-1100 full) */
+    int sensitivity;       /* percent, mouse/stick speed */
+    int invert_y;          /* sticks / mouse Y */
+    int gyro_mode;         /* GYRO_* */
+    int gyro_sens;         /* percent */
+    double gyro_bias[3];   /* raw gyro offset measured at rest (calibration) */
+    /* kbmouse: per-button X11 keysym names; empty = unmapped.
+       Index order: A B X Y DLEFT DRIGHT DUP DOWN ZL ZR L R PLUS MINUS HOME L3 R3 TV */
+    char keys[18][32];
+    /* stick direction -> key (kb/mouse): LX-,LX+,LY-,LY+, RX-,RX+,RY-,RY+ */
+    char stick_keys[8][32];
+    int touch_as_mouse;
+    int right_stick_mouse;
+} input_cfg_t;
+
+typedef struct {
+    char pad_ip[64];       /* empty = first pad found */
+    source_t source;
+    int source_type;
+    int aspect;            /* ASPECT_* */
+    char preset_name[64];
+    int crf, kbps, gop;    /* resolved quality (preset or custom) */
+    int custom_quality;    /* 1 = don't follow preset_name */
+    int low_latency;       /* x264 zerolatency: no lookahead, no B-frames */
+    quality_preset_t presets[8];
+    int npresets;
+    input_cfg_t input;
+    int audio_pc_to_pad;
+    int audio_pad_to_pc;
+    char audio_monitor[128];
+    int autostart_stream;  /* start streaming when pad connects */
+    int gamepad_only;      /* stream a static test image instead of capture (calibration) */
+    int gamepad_only_black;/* gamepad-only sends black frames instead of test image */
+} settings_t;
+
+settings_t *settings_load(void);
+void settings_save(settings_t *s);
+void settings_defaults(settings_t *s);
+const char *settings_path(void);

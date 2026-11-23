@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=wupstreamd
+Comment=Stream your screen to a Wii U GamePad
+Exec=wupstreamd
+Icon=wupstreamd
+Terminal=false
+Categories=AudioVideo;Network;
