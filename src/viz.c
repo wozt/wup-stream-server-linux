@@ -1,291 +1,473 @@
-/* pad visualization widget: feed it pad input ~30x/s, it draws itself.
-   All drawing lives here so the layout can be iterated independently. */
+/* Wii U GamePad live monitor. GTK3/Cairo, deliberately self-contained.
+ * The geometry follows the physical GamePad: sticks above D-pad/ABXY,
+ * a central 16:9 touchscreen, shoulders above, utility keys underneath.
+ * The LCD hosts three signed gyro gauges and a miniature touch monitor,
+ * never an artificial horizon. No shared Cairo paths: each primitive starts a fresh path. */
 #include "viz.h"
 #include <gtk/gtk.h>
 #include <cairo/cairo.h>
 #include <math.h>
+#include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 typedef struct {
     wupstream_input_t in;
-    int has;
+    gboolean has;
 } viz_state_t;
 
-#define VW 320
-#define VH 180
+#define VW 440.0
+#define VH 240.0
+#define TAU (2.0 * G_PI)
 
-/* live pad visualization: logical 320x180 space scaled to fit the widget,
-   so nothing is ever clipped. Wii U layout: sticks bottom, dpad left,
-   ABXY right, shoulders top, attitude gauge + gyro top-right. */
-static void viz_circle(cairo_t *cr, double x, double y, double r,
-                       int on, double dim) {
-    cairo_set_source_rgba(cr, 1, 1, 1, on ? 0.9 : dim);
-    cairo_arc(cr, x, y, r, 0, 2 * G_PI);
-    cairo_fill_preserve(cr);
-    cairo_set_source_rgba(cr, 1, 1, 1, 0.7);
-    cairo_set_line_width(cr, 1.2);
-    cairo_stroke(cr);
-}
+static const double accent[3] = {0.22, 0.69, 1.00};
 
 static viz_state_t *viz_state(GtkWidget *w) {
     return g_object_get_data(G_OBJECT(w), "viz-state");
 }
 
-static gboolean viz_draw(GtkWidget *w, cairo_t *cr, gpointer data) {
-    (void)data;
-    viz_state_t *st = viz_state(w);
-    wupstream_input_t in;
-    int have = st && st->has;
-    if (have) in = st->in;
-    GtkAllocation al;
-    gtk_widget_get_allocation(w, &al);
-    cairo_set_source_rgb(cr, 0.10, 0.11, 0.15);
-    cairo_paint(cr);
+static double clampd(double v, double lo, double hi) {
+    return v < lo ? lo : (v > hi ? hi : v);
+}
 
-    double sc = MIN((double)al.width / VW, (double)al.height / VH);
-    if (sc <= 0) return FALSE;
-    cairo_save(cr);
-    cairo_translate(cr, (al.width - VW * sc) / 2, (al.height - VH * sc) / 2);
-    cairo_scale(cr, sc, sc);
-    cairo_select_font_face(cr, "Sans", CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_NORMAL);
+static void rgba(cairo_t *cr, double r, double g, double b, double a) {
+    cairo_set_source_rgba(cr, r, g, b, a);
+}
 
-    if (!have) {
-        cairo_set_source_rgb(cr, 0.5, 0.5, 0.55);
-        cairo_set_font_size(cr, 12);
-        cairo_move_to(cr, 12, VH / 2);
-        cairo_show_text(cr, "no pad data - start the stream");
-        cairo_restore(cr);
-        return FALSE;
-    }
+static void accent_color(cairo_t *cr, double a) {
+    rgba(cr, accent[0], accent[1], accent[2], a);
+}
 
-    /* ---- gamepad body silhouette ---- */
+static void round_path(cairo_t *cr, double x, double y,
+                       double w, double h, double r) {
+    r = fmin(r, fmin(w, h) * 0.5);
     cairo_new_path(cr);
-    cairo_move_to(cr, 62, 10);
-    cairo_line_to(cr, 258, 10);
-    cairo_curve_to(cr, 298, 10, 312, 36, 312, 66);
-    cairo_line_to(cr, 312, 128);
-    cairo_curve_to(cr, 312, 162, 284, 174, 246, 174);
-    cairo_line_to(cr, 74, 174);
-    cairo_curve_to(cr, 36, 174, 8, 162, 8, 128);
-    cairo_line_to(cr, 8, 66);
-    cairo_curve_to(cr, 8, 36, 22, 10, 62, 10);
+    cairo_arc(cr, x + w - r, y + r, r, -G_PI / 2, 0);
+    cairo_arc(cr, x + w - r, y + h - r, r, 0, G_PI / 2);
+    cairo_arc(cr, x + r, y + h - r, r, G_PI / 2, G_PI);
+    cairo_arc(cr, x + r, y + r, r, G_PI, G_PI * 1.5);
     cairo_close_path(cr);
-    cairo_set_source_rgb(cr, 0.16, 0.17, 0.22);
+}
+
+static void circle_path(cairo_t *cr, double x, double y, double r) {
+    cairo_new_path(cr);
+    cairo_arc(cr, x, y, r, 0, TAU);
+    cairo_close_path(cr);
+}
+
+static void label(cairo_t *cr, const char *str, double x, double baseline,
+                  double size, gboolean bold, double r, double g, double b,
+                  double alpha, gboolean center) {
+    cairo_select_font_face(cr, "Sans", CAIRO_FONT_SLANT_NORMAL,
+                           bold ? CAIRO_FONT_WEIGHT_BOLD : CAIRO_FONT_WEIGHT_NORMAL);
+    cairo_set_font_size(cr, size);
+    rgba(cr, r, g, b, alpha);
+    if (center) {
+        cairo_text_extents_t e;
+        cairo_text_extents(cr, str, &e);
+        x -= e.x_bearing + e.width / 2;
+    }
+    cairo_move_to(cr, x, baseline);
+    cairo_show_text(cr, str);
+    cairo_new_path(cr);
+}
+
+static void housing(cairo_t *cr) {
+    /* Shoulder/trigger ledge appears behind the front shell. */
+    round_path(cr, 22, 13, 396, 33, 16);
+    rgba(cr, .075, .087, .115, 1);
+    cairo_fill(cr);
+
+    /* Soft edge shadow, then a real rounded GamePad silhouette. */
+    round_path(cr, 3.5, 29, 433, 207, 56);
+    rgba(cr, .015, .018, .030, .75);
+    cairo_fill(cr);
+
+    round_path(cr, 5, 25, 430, 205, 55);
+    cairo_pattern_t *p = cairo_pattern_create_linear(0, 25, 0, 232);
+    cairo_pattern_add_color_stop_rgb(p, 0, .255, .277, .322);
+    cairo_pattern_add_color_stop_rgb(p, .4, .162, .180, .220);
+    cairo_pattern_add_color_stop_rgb(p, 1, .105, .119, .155);
+    cairo_set_source(cr, p);
     cairo_fill_preserve(cr);
-    cairo_set_source_rgba(cr, 1, 1, 1, 0.35);
-    cairo_set_line_width(cr, 1.5);
+    cairo_pattern_destroy(p);
+    rgba(cr, .65, .70, .78, .46);
+    cairo_set_line_width(cr, 1.65);
     cairo_stroke(cr);
 
-    /* ---- screen area (top ~55% of the face) ---- */
-    cairo_set_source_rgba(cr, 1, 1, 1, 0.06);
-    cairo_rectangle(cr, 70, 18, 180, 68);
+    round_path(cr, 10, 30, 420, 195, 51);
+    rgba(cr, .90, .93, 1, .055);
+    cairo_set_line_width(cr, 1.0);
+    cairo_stroke(cr);
+
+    /* Camera / sensor window, matching the physical bezel. */
+    round_path(cr, 182, 29, 76, 17, 8);
+    rgba(cr, .025, .035, .052, 1);
     cairo_fill(cr);
-    cairo_set_source_rgba(cr, 1, 1, 1, 0.2);
-    cairo_rectangle(cr, 70, 18, 180, 68);
+    circle_path(cr, 220, 37.5, 5.0);
+    rgba(cr, .11, .23, .35, 1);
+    cairo_fill(cr);
+    circle_path(cr, 220, 37.5, 2.2);
+    accent_color(cr, .6);
+    cairo_fill(cr);
+
+    /* The speakers flank the LCD; they are not interactive. */
+    for (int side = 0; side < 2; side++) {
+        const double x = side ? 350 : 90;
+        for (int n = 0; n < 5; n++) {
+            circle_path(cr, x, 102 + n * 6, 1.1);
+            rgba(cr, .018, .026, .043, .72);
+            cairo_fill(cr);
+        }
+    }
+}
+
+static void shoulder(cairo_t *cr, const char *name, double x,
+                     unsigned bit, const wupstream_input_t *in) {
+    gboolean on = (in->buttons & bit) != 0;
+    round_path(cr, x, 11, 39, 17, 5);
+    if (on) accent_color(cr, .96);
+    else rgba(cr, .22, .26, .33, 1);
+    cairo_fill_preserve(cr);
+    if (on) rgba(cr, .71, .91, 1, .90);
+    else rgba(cr, .66, .71, .79, .54);
     cairo_set_line_width(cr, 1);
     cairo_stroke(cr);
-    cairo_set_source_rgba(cr, 1, 1, 1, 0.35);
-    cairo_rectangle(cr, 78, 24, 60, 4);          /* camera dot */
+    label(cr, name, x + 19.5, 22.7, 9, TRUE,
+          on ? .045 : .81, on ? .14 : .85, on ? .22 : .92, 1, TRUE);
+}
+
+static void stick(cairo_t *cr, double x, double y,
+                  int raw_x, int raw_y, gboolean pressed, const char *name) {
+    /* Concentric mechanical base, with a small moving cap for direction. */
+    circle_path(cr, x, y, 24);
+    rgba(cr, .020, .030, .049, .96);
+    cairo_fill_preserve(cr);
+    if (pressed) accent_color(cr, 1);
+    else rgba(cr, .55, .60, .68, .62);
+    cairo_set_line_width(cr, pressed ? 2.4 : 1.4);
+    cairo_stroke(cr);
+
+    circle_path(cr, x, y, 18.6);
+    rgba(cr, .19, .23, .29, 1);
+    cairo_fill_preserve(cr);
+    rgba(cr, .55, .62, .71, .31);
+    cairo_set_line_width(cr, 1);
+    cairo_stroke(cr);
+
+    /* Center guides: begin a new path, so no diagonal junk survives. */
+    cairo_new_path(cr);
+    cairo_move_to(cr, x - 13, y);
+    cairo_line_to(cr, x + 13, y);
+    cairo_move_to(cr, x, y - 13);
+    cairo_line_to(cr, x, y + 13);
+    rgba(cr, .75, .80, .87, .18);
+    cairo_set_line_width(cr, .8);
+    cairo_stroke(cr);
+
+    double px = x + clampd(raw_x / 1100.0, -1, 1) * 10;
+    double py = y - clampd(raw_y / 1100.0, -1, 1) * 10;
+    circle_path(cr, px, py, 10.2);
+    rgba(cr, .27, .32, .40, 1);
+    cairo_fill_preserve(cr);
+    rgba(cr, .78, .83, .92, .48);
+    cairo_set_line_width(cr, 1.0);
+    cairo_stroke(cr);
+    circle_path(cr, px, py, 5.2);
+    accent_color(cr, .98);
     cairo_fill(cr);
 
-    /* ---- shoulders along the top edge: ZL L | R ZR ---- */
-    {
-        struct { int bit; double x; const char *t; } sh[4] = {
-            { WUPSTREAM_ZL, 50, "ZL" }, { WUPSTREAM_L, 86, "L" },
-            { WUPSTREAM_R, 234, "R" },  { WUPSTREAM_ZR, 270, "ZR" }
-        };
-        for (int i = 0; i < 4; i++) {
-            int on = (in.buttons & sh[i].bit) != 0;
-            cairo_set_source_rgba(cr, 1, 1, 1, on ? 0.85 : 0.16);
-            cairo_rectangle(cr, sh[i].x - 15, 13, 30, 10);
-            cairo_fill_preserve(cr);
-            cairo_set_source_rgba(cr, 1, 1, 1, 0.5);
-            cairo_set_line_width(cr, 1);
-            cairo_stroke(cr);
-            cairo_set_source_rgb(cr, on ? 0.1 : 0.6, on ? 0.1 : 0.6, on ? 0.15 : 0.65);
-            cairo_set_font_size(cr, 7);
-            cairo_text_extents_t te;
-            cairo_text_extents(cr, sh[i].t, &te);
-            cairo_move_to(cr, sh[i].x - te.width / 2, 21);
-            cairo_show_text(cr, sh[i].t);
-        }
-    }
+    label(cr, name, x, y + 36.5, 9, TRUE, .81, .85, .91, .85, TRUE);
+}
 
-    /* ---- sticks: L (88,130) R (186,124), r=19 ---- */
-    for (int st = 0; st < 2; st++) {
-        double bx = st ? 186 : 88, by = st ? 124 : 130;
-        int rx = st ? in.rx : in.lx, ry = st ? in.ry : in.ly;
-        cairo_set_source_rgba(cr, 0, 0, 0, 0.35);
-        cairo_arc(cr, bx, by, 20, 0, 2 * G_PI);
+static void dpad(cairo_t *cr, double cx, double cy,
+                 const wupstream_input_t *in) {
+    struct { unsigned bit; double x, y, w, h; } arms[4] = {
+        {WUPSTREAM_UP,    cx - 6, cy - 20, 12, 16},
+        {WUPSTREAM_DOWN,  cx - 6, cy + 4,  12, 16},
+        {WUPSTREAM_LEFT,  cx - 20, cy - 6, 16, 12},
+        {WUPSTREAM_RIGHT, cx + 4,  cy - 6, 16, 12}
+    };
+    for (int i = 0; i < 4; i++) {
+        const gboolean on = (in->buttons & arms[i].bit) != 0;
+        round_path(cr, arms[i].x, arms[i].y, arms[i].w, arms[i].h, 2.6);
+        if (on) accent_color(cr, .95);
+        else rgba(cr, .065, .085, .12, 1);
         cairo_fill_preserve(cr);
-        cairo_set_source_rgba(cr, 1, 1, 1, 0.5);
+        rgba(cr, .72, .78, .87, on ? .72 : .30);
+        cairo_set_line_width(cr, 1);
+        cairo_stroke(cr);
+    }
+    round_path(cr, cx - 6, cy - 6, 12, 12, 1.7);
+    rgba(cr, .095, .125, .17, 1);
+    cairo_fill_preserve(cr);
+    rgba(cr, .65, .72, .83, .35);
+    cairo_set_line_width(cr, .7);
+    cairo_stroke(cr);
+}
+
+static void face_button(cairo_t *cr, double x, double y,
+                        const char *t, gboolean on) {
+    circle_path(cr, x, y + 1.3, 12.2);
+    rgba(cr, .02, .025, .04, .75);
+    cairo_fill(cr);
+    circle_path(cr, x, y, 11.4);
+    if (on) accent_color(cr, 1);
+    else rgba(cr, .11, .14, .19, 1);
+    cairo_fill_preserve(cr);
+    if (on) rgba(cr, .84, .96, 1, .95);
+    else rgba(cr, .68, .74, .83, .66);
+    cairo_set_line_width(cr, 1.1);
+    cairo_stroke(cr);
+    label(cr, t, x, y + 3.8, 11, TRUE,
+          on ? .035 : .91, on ? .13 : .94, on ? .20 : .97, 1, TRUE);
+}
+
+static void small_key(cairo_t *cr, double x, double y, double radius,
+                      const char *t, gboolean on, double fontsize) {
+    circle_path(cr, x, y, radius);
+    if (on) accent_color(cr, 1);
+    else rgba(cr, .085, .115, .158, 1);
+    cairo_fill_preserve(cr);
+    if (on) rgba(cr, .85, .97, 1, .95);
+    else rgba(cr, .72, .77, .87, .55);
+    cairo_set_line_width(cr, 1);
+    cairo_stroke(cr);
+    label(cr, t, x, y + fontsize * .36, fontsize, TRUE,
+          on ? .04 : .90, on ? .14 : .92, on ? .22 : .97, 1, TRUE);
+}
+
+static void screen_frame(cairo_t *cr) {
+    /* 16:9 LCD in its own well, never under the buttons. */
+    round_path(cr, 100, 49, 240, 143, 8);
+    rgba(cr, .018, .027, .042, 1);
+    cairo_fill_preserve(cr);
+    rgba(cr, .57, .62, .70, .62);
+    cairo_set_line_width(cr, 2.0);
+    cairo_stroke(cr);
+
+    round_path(cr, 106, 56, 228, 128, 3.5);
+    cairo_pattern_t *p = cairo_pattern_create_linear(106, 56, 334, 184);
+    cairo_pattern_add_color_stop_rgb(p, 0, .065, .111, .157);
+    cairo_pattern_add_color_stop_rgb(p, 1, .027, .050, .080);
+    cairo_set_source(cr, p);
+    cairo_fill(cr);
+    cairo_pattern_destroy(p);
+
+    /* Very subtle LCD grid, behind gauges (never connected to controls). */
+    cairo_new_path(cr);
+    for (int x = 122; x <= 326; x += 17) {
+        cairo_move_to(cr, x, 83); cairo_line_to(cr, x, 175);
+    }
+    for (int y = 83; y <= 175; y += 16) {
+        cairo_move_to(cr, 115, y); cairo_line_to(cr, 325, y);
+    }
+    rgba(cr, .5, .72, .92, .045);
+    cairo_set_line_width(cr, .8);
+    cairo_stroke(cr);
+}
+
+/* Signed gyro gauges: zero is centered, blue = positive, amber = negative.
+ * The reading is shown in degrees per second (raw / 4194). The gauge
+ * intentionally saturates at +/-200 dps, while the text remains un-clipped. */
+static void gyro_gauge(cairo_t *cr, const char *axis,
+                       int raw, double baseline) {
+    const double velocity = raw / 4194.0;
+    const double clipped = clampd(velocity / 200.0, -1, 1);
+    const double x = 137, width = 110, mid = x + width * .5;
+    const double y = baseline - 8;
+    label(cr, axis, 120, baseline, 10, TRUE, .81, .88, .96, 1, TRUE);
+
+    round_path(cr, x, y, width, 9, 4.0);
+    rgba(cr, .17, .25, .33, 1);
+    cairo_fill_preserve(cr);
+    rgba(cr, .48, .63, .77, .26);
+    cairo_set_line_width(cr, .7);
+    cairo_stroke(cr);
+
+    /* Guide ticks at 50% and central zero tick. */
+    cairo_new_path(cr);
+    cairo_move_to(cr, x + width * .25, y + 2);
+    cairo_line_to(cr, x + width * .25, y + 7);
+    cairo_move_to(cr, x + width * .75, y + 2);
+    cairo_line_to(cr, x + width * .75, y + 7);
+    rgba(cr, .80, .91, 1, .16);
+    cairo_set_line_width(cr, .8);
+    cairo_stroke(cr);
+
+    double amount = fabs(clipped) * (width * .5 - 2);
+    if (amount >= .3) {
+        round_path(cr, clipped < 0 ? mid - amount : mid,
+                   y + 1.0, amount, 7, 2.5);
+        if (clipped < 0) rgba(cr, 1, .65, .34, .97);
+        else accent_color(cr, .97);
+        cairo_fill(cr);
+    }
+    cairo_new_path(cr);
+    cairo_move_to(cr, mid, y - 1);
+    cairo_line_to(cr, mid, y + 10);
+    rgba(cr, .94, .97, 1, .92);
+    cairo_set_line_width(cr, 1.1);
+    cairo_stroke(cr);
+
+    char value[24];
+    snprintf(value, sizeof value, "%+.0f", velocity);
+    label(cr, value, 260, baseline, 8.2, TRUE,
+          clipped < 0 ? 1.0 : .68,
+          clipped < 0 ? .78 : .86,
+          clipped < 0 ? .54 : 1.0,
+          1, TRUE);
+}
+
+static void motion_screen(cairo_t *cr, const wupstream_input_t *in,
+                          gboolean have) {
+    screen_frame(cr);
+    if (!have) {
+        circle_path(cr, 220, 105, 13);
+        rgba(cr, .42, .49, .58, .45);
         cairo_set_line_width(cr, 1.4);
         cairo_stroke(cr);
-        cairo_set_source_rgba(cr, 1, 1, 1, 0.18);
-        cairo_move_to(cr, bx - 19, by); cairo_line_to(cr, bx + 19, by);
-        cairo_move_to(cr, bx, by - 19); cairo_line_to(cr, bx, by + 19);
-        cairo_stroke(cr);
-        double px = bx + rx / 1100.0 * 17, py = by - ry / 1100.0 * 17;
-        cairo_set_source_rgb(cr, 0.25, 0.6, 0.95);
-        cairo_arc(cr, px, py, 6, 0, 2 * G_PI);
+        label(cr, "NO GAMEPAD DATA", 220, 133, 12, TRUE,
+              .81, .87, .95, 1, TRUE);
+        label(cr, "Start the stream to monitor inputs", 220, 151, 9,
+              FALSE, .58, .67, .78, 1, TRUE);
+        return;
+    }
+
+    circle_path(cr, 117, 70, 3);
+    accent_color(cr, 1);
+    cairo_fill(cr);
+    label(cr, "WUP / LIVE INPUT", 126, 73, 9, TRUE,
+          .78, .88, .97, .95, FALSE);
+
+    char buf[72];
+    if (in->battery >= 0 && in->battery <= 100)
+        snprintf(buf, sizeof buf, "BAT %d%%", in->battery);
+    else
+        snprintf(buf, sizeof buf, "BAT --");
+    label(cr, buf, 302, 73, 9, TRUE, .67, .80, .90, .9, TRUE);
+
+    cairo_new_path(cr);
+    cairo_move_to(cr, 114, 79);
+    cairo_line_to(cr, 326, 79);
+    rgba(cr, .49, .64, .78, .24);
+    cairo_set_line_width(cr, .8);
+    cairo_stroke(cr);
+
+    label(cr, "GYRO (deg/s)", 120, 92, 9, TRUE,
+          .71, .81, .91, .96, FALSE);
+    gyro_gauge(cr, "X", in->gyro[0], 109);
+    gyro_gauge(cr, "Y", in->gyro[1], 132);
+    gyro_gauge(cr, "Z", in->gyro[2], 155);
+
+    /* Miniature touchscreen, independent of the gyroscope gauges.
+       The GamePad touch range is 854 x 480 (coordinate 0..853, 0..479). */
+    label(cr, "TOUCH", 302, 92, 9, TRUE, .71, .81, .91, .96, TRUE);
+    const double sx = 278, sy = 100, sw = 49, sh = 28;
+    round_path(cr, sx, sy, sw, sh, 2.5);
+    rgba(cr, .08, .16, .24, .96);
+    cairo_fill_preserve(cr);
+    rgba(cr, .59, .76, .92, .60);
+    cairo_set_line_width(cr, .8);
+    cairo_stroke(cr);
+    if (in->touched) {
+        const double px = sx + 2 + clampd(in->tx / 853.0, 0, 1) * (sw - 4);
+        const double py = sy + 2 + clampd(in->ty / 479.0, 0, 1) * (sh - 4);
+        circle_path(cr, px, py, 3.3);
+        rgba(cr, 1, .67, .30, 1);
         cairo_fill_preserve(cr);
-        cairo_set_source_rgb(cr, 0.1, 0.15, 0.25);
-        cairo_set_line_width(cr, 1);
+        rgba(cr, 1, 1, 1, .92);
+        cairo_set_line_width(cr, .8);
         cairo_stroke(cr);
-        int l3 = st ? (in.buttons & WUPSTREAM_R3) : (in.buttons & WUPSTREAM_L3);
-        cairo_set_source_rgb(cr, l3 ? 0.3 : 0.5, l3 ? 0.75 : 0.5, l3 ? 1.0 : 0.5);
-        cairo_arc(cr, bx, by - 27, 3, 0, 2 * G_PI);
-        cairo_fill(cr);
-        cairo_set_source_rgb(cr, 0.55, 0.55, 0.6);
-        cairo_set_font_size(cr, 8);
-        cairo_move_to(cr, bx - 12, by + 36);
-        cairo_show_text(cr, st ? "R" : "L");
+        snprintf(buf, sizeof buf, "%d, %d", in->tx, in->ty);
+    } else {
+        snprintf(buf, sizeof buf, "no touch");
     }
+    label(cr, buf, 302, 143, 8, FALSE, .80, .90, .98, .90, TRUE);
 
-    /* ---- dpad (left edge, small): center (38,102), arm 11 ---- */
-    {
-        double dx = 38, dy = 102, a = 11, w = 8;
-        cairo_set_source_rgba(cr, 1, 1, 1, 0.16);
-        cairo_rectangle(cr, dx - w / 2, dy - a, w, 2 * a);
-        cairo_rectangle(cr, dx - a, dy - w / 2, 2 * a, w);
-        cairo_fill_preserve(cr);
-        cairo_set_source_rgba(cr, 1, 1, 1, 0.55);
-        cairo_set_line_width(cr, 1.1);
-        cairo_stroke(cr);
-        struct { int bit; double ox, oy; } dp[4] = {
-            { WUPSTREAM_UP, 0, -1 }, { WUPSTREAM_DOWN, 0, 1 },
-            { WUPSTREAM_LEFT, -1, 0 }, { WUPSTREAM_RIGHT, 1, 0 }
-        };
-        for (int i = 0; i < 4; i++)
-            if (in.buttons & dp[i].bit) {
-                cairo_set_source_rgb(cr, 0.3, 0.75, 1.0);
-                cairo_arc(cr, dx + dp[i].ox * (a - 4), dy + dp[i].oy * (a - 4), 3.5, 0, 2 * G_PI);
-                cairo_fill(cr);
-            }
-    }
+    /* Accelerometer: signed g values, without an artificial horizon. */
+    label(cr, "ACCEL (g)", 278, 163, 8.3, TRUE,
+          .65, .76, .87, .9, TRUE);
+    snprintf(buf, sizeof buf, "X%+.1f Y%+.1f Z%+.1f",
+             in->accel[0] / 8200.0,
+             in->accel[1] / 8200.0,
+             in->accel[2] / 8200.0);
+    /* fit the accelerometer readout across the full LCD width */
+    label(cr, buf, 220, 176, 9.1, FALSE,
+          .69, .85, .96, .96, TRUE);
+}
 
-    /* ---- face buttons diamond center (253,118), r=24, btn r=10 ---- */
-    {
-        struct { int bit; double ox, oy; const char *t; } fb[4] = {
-            { WUPSTREAM_X, 0, -1, "X" }, { WUPSTREAM_Y, -1, 0, "Y" },
-            { WUPSTREAM_A, 1, 0, "A" },  { WUPSTREAM_B, 0, 1, "B" }
-        };
-        double fx = 253, fy = 118;
-        for (int i = 0; i < 4; i++) {
-            double bx = fx + fb[i].ox * 24, by = fy + fb[i].oy * 24;
-            int on = (in.buttons & fb[i].bit) != 0;
-            viz_circle(cr, bx, by, 10, on, on ? 0.9 : 0.2);
-            cairo_set_source_rgb(cr, on ? 0.1 : 0.65, on ? 0.1 : 0.65, on ? 0.15 : 0.7);
-            cairo_set_font_size(cr, 9);
-            cairo_text_extents_t te;
-            cairo_text_extents(cr, fb[i].t, &te);
-            cairo_move_to(cr, bx - te.width / 2, by + te.height / 2);
-            cairo_show_text(cr, fb[i].t);
-        }
-    }
+static gboolean viz_draw(GtkWidget *w, cairo_t *cr, gpointer unused) {
+    (void)unused;
+    viz_state_t *st = viz_state(w);
+    wupstream_input_t in = {0};
+    gboolean have = st && st->has;
+    if (have) in = st->in;
 
-    /* ---- MINUS / PLUS flanking upper-center, HOME bottom-center ---- */
-    {
-        struct { int bit; double x, y; const char *t; double r; } sm[3] = {
-            { WUPSTREAM_MINUS, 138, 94, "-", 6.5 },
-            { WUPSTREAM_PLUS,  182, 94, "+", 6.5 },
-            { WUPSTREAM_HOME,  160, 160, "\xe2\x97\x8f", 7 }
-        };
-        for (int i = 0; i < 3; i++) {
-            int on = (in.buttons & sm[i].bit) != 0;
-            viz_circle(cr, sm[i].x, sm[i].y, sm[i].r, on, 0.2);
-            cairo_set_source_rgb(cr, on ? 0.1 : 0.7, on ? 0.1 : 0.7, on ? 0.15 : 0.75);
-            cairo_set_font_size(cr, 7);
-            cairo_text_extents_t te;
-            cairo_text_extents(cr, sm[i].t, &te);
-            cairo_move_to(cr, sm[i].x - te.width / 2, sm[i].y + 2.5);
-            cairo_show_text(cr, sm[i].t);
-        }
-    }
+    GtkAllocation al;
+    gtk_widget_get_allocation(w, &al);
+    rgba(cr, .064, .078, .112, 1);
+    cairo_paint(cr);
+    if (al.width <= 0 || al.height <= 0) return FALSE;
 
-    /* ---- attitude indicator top-right corner: (294,36) r=13 ---- */
-    {
-        double ax = in.accel[0] / 8200.0, ay = in.accel[1] / 8200.0,
-               az = in.accel[2] / 8200.0;
-        double roll = atan2(ax, az);
-        double pitch = atan2(-ay, sqrt(ax * ax + az * az));
-        double hx = 294, hy = 36, hr = 13;
-        cairo_save(cr);
-        cairo_arc(cr, hx, hy, hr, 0, 2 * G_PI);
-        cairo_clip(cr);
-        cairo_translate(cr, hx, hy);
-        cairo_rotate(cr, roll);
-        cairo_translate(cr, 0, pitch * hr * 0.8);
-        cairo_set_source_rgb(cr, 0.25, 0.45, 0.75);
-        cairo_rectangle(cr, -hr * 2, -hr * 3, hr * 4, hr * 3);
-        cairo_fill(cr);
-        cairo_set_source_rgb(cr, 0.55, 0.38, 0.2);
-        cairo_rectangle(cr, -hr * 2, 0, hr * 4, hr * 3);
-        cairo_fill(cr);
-        cairo_set_source_rgb(cr, 1, 1, 1);
-        cairo_set_line_width(cr, 1);
-        cairo_move_to(cr, -hr * 2, 0); cairo_line_to(cr, hr * 2, 0);
-        cairo_stroke(cr);
-        cairo_restore(cr);
-        cairo_set_source_rgba(cr, 1, 1, 1, 0.55);
-        cairo_arc(cr, hx, hy, hr, 0, 2 * G_PI);
-        cairo_set_line_width(cr, 1.1);
-        cairo_stroke(cr);
-        cairo_set_source_rgb(cr, 1, 1, 1);
-        cairo_set_line_width(cr, 1.3);
-        cairo_move_to(cr, hx - 6, hy); cairo_line_to(cr, hx + 6, hy);
-        cairo_move_to(cr, hx, hy - 3); cairo_line_to(cr, hx, hy + 3);
-        cairo_stroke(cr);
+    double scale = fmin(al.width / VW, al.height / VH);
+    cairo_save(cr);
+    cairo_translate(cr, (al.width - VW * scale) / 2,
+                        (al.height - VH * scale) / 2);
+    cairo_scale(cr, scale, scale);
+    cairo_set_antialias(cr, CAIRO_ANTIALIAS_BEST);
+    cairo_set_line_cap(cr, CAIRO_LINE_CAP_ROUND);
+    cairo_set_line_join(cr, CAIRO_LINE_JOIN_ROUND);
 
-        /* gyro dps bars under the gauge */
-        cairo_set_source_rgb(cr, 0.55, 0.55, 0.6);
-        cairo_set_font_size(cr, 7);
-        cairo_move_to(cr, 258, 56);
-        cairo_show_text(cr, "gyro");
-        for (int i = 0; i < 3; i++) {
-            double gx = in.gyro[i] / 4194.0;
-            double v = gx / 1000.0; if (v > 1) v = 1; if (v < -1) v = -1;
-            double bx = 258 + i * 18;
-            cairo_set_source_rgba(cr, 1, 1, 1, 0.2);
-            cairo_rectangle(cr, bx, 59, 15, 4);
-            cairo_fill(cr);
-            cairo_set_source_rgb(cr, 0.3, 0.75, 1.0);
-            double ww = 7.5 * v;
-            cairo_rectangle(cr, bx + 7.5 + (ww < 0 ? ww : 0), 59,
-                            ww < 0 ? -ww : ww, 4);
-            cairo_fill(cr);
-        }
-    }
+    housing(cr);
+    shoulder(cr, "ZL", 30, WUPSTREAM_ZL, &in);
+    shoulder(cr, "L", 75, WUPSTREAM_L, &in);
+    shoulder(cr, "R", 326, WUPSTREAM_R, &in);
+    shoulder(cr, "ZR", 371, WUPSTREAM_ZR, &in);
 
-    /* ---- touch point overlay, confined to the screen rect ---- */
-    if (in.touched) {
-        cairo_set_source_rgb(cr, 1, 0.6, 0.2);
-        cairo_arc(cr, 70 + in.tx * 180.0 / 853.0,
-                       18 + in.ty * 68.0 / 479.0, 6, 0, 2 * G_PI);
-        cairo_fill_preserve(cr);
-        cairo_set_source_rgb(cr, 1, 1, 1);
-        cairo_set_line_width(cr, 1.5);
-        cairo_stroke(cr);
-    }
+    motion_screen(cr, &in, have);
+    stick(cr, 49, 74, in.lx, in.ly, (in.buttons & WUPSTREAM_L3) != 0, "L3");
+    stick(cr, 391, 74, in.rx, in.ry, (in.buttons & WUPSTREAM_R3) != 0, "R3");
+    dpad(cr, 49, 150, &in);
+
+    face_button(cr, 391, 124, "X", (in.buttons & WUPSTREAM_X) != 0);
+    face_button(cr, 367, 148, "Y", (in.buttons & WUPSTREAM_Y) != 0);
+    face_button(cr, 415, 148, "A", (in.buttons & WUPSTREAM_A) != 0);
+    face_button(cr, 391, 172, "B", (in.buttons & WUPSTREAM_B) != 0);
+
+    label(cr, "Wii U", 120, 215, 11, TRUE, .70, .77, .85, .76, FALSE);
+    small_key(cr, 220, 211, 10.5, "H", (in.buttons & WUPSTREAM_HOME) != 0, 9);
+    label(cr, "HOME", 220, 229, 7.5, TRUE, .72, .78, .88, .73, TRUE);
+    small_key(cr, 315, 212, 7.5, "T", (in.buttons & WUPSTREAM_TV) != 0, 8);
+    label(cr, "TV", 315, 228, 7, TRUE, .72, .78, .88, .74, TRUE);
+    /* Power is rendered as a physical detail but not a synthetic input. */
+    small_key(cr, 342, 212, 7.5, "P", FALSE, 8);
+    label(cr, "PWR", 342, 228, 7, FALSE, .62, .68, .77, .72, TRUE);
+    small_key(cr, 377, 205, 8.2, "-", (in.buttons & WUPSTREAM_MINUS) != 0, 10);
+    small_key(cr, 406, 205, 8.2, "+", (in.buttons & WUPSTREAM_PLUS) != 0, 10);
 
     cairo_restore(cr);
     return FALSE;
 }
 
-
 GtkWidget *pad_viz_new(void) {
-    viz_state_t *st = calloc(1, sizeof *st);
+    viz_state_t *st = g_new0(viz_state_t, 1);
     GtkWidget *w = gtk_drawing_area_new();
-    gtk_widget_set_size_request(w, 320, 175);
-    g_signal_connect(w, "draw", G_CALLBACK(viz_draw), NULL);
+    gtk_widget_set_size_request(w, 384, 210);
     g_object_set_data_full(G_OBJECT(w), "viz-state", st, g_free);
+    g_signal_connect(w, "draw", G_CALLBACK(viz_draw), NULL);
     return w;
 }
 
 void pad_viz_feed(GtkWidget *w, const wupstream_input_t *in) {
     viz_state_t *st = viz_state(w);
     if (!st) return;
-    if (in) { st->in = *in; st->has = 1; }
-    else st->has = 0;
+    if (in) {
+        st->in = *in;
+        st->has = TRUE;
+    } else {
+        st->has = FALSE;
+        memset(&st->in, 0, sizeof st->in);
+    }
     gtk_widget_queue_draw(w);
 }
