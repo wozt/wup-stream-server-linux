@@ -267,70 +267,97 @@ static void screen_frame(cairo_t *cr) {
     cairo_stroke(cr);
 }
 
-/* Signed gyro gauges: zero is centered, blue = positive, amber = negative.
- * The reading is shown in degrees per second (raw / 4194). The gauge
- * intentionally saturates at +/-200 dps, while the text remains un-clipped. */
+/* Three permanently visible signed gyro gauges.
+ * Raw Wii U sensor units are 4194 units/dps (as in input.c). The previous
+ * +/-200 dps linear scale hid ordinary wrist movements. A sqrt response
+ * gives small movements useful travel while retaining +/-30 dps headroom.
+ * Numbers are real, unamplified dps and remain readable past saturation. */
 static void gyro_gauge(cairo_t *cr, const char *axis,
-                       int raw, double baseline) {
-    const double velocity = raw / 4194.0;
-    const double clipped = clampd(velocity / 200.0, -1, 1);
+                       int raw, double baseline, gboolean live) {
+    const double velocity = live ? raw / 4194.0 : 0.0;
+    const double magnitude = sqrt(clampd(fabs(velocity) / 30.0, 0, 1));
     const double x = 137, width = 110, mid = x + width * .5;
     const double y = baseline - 8;
-    label(cr, axis, 120, baseline, 10, TRUE, .81, .88, .96, 1, TRUE);
+    label(cr, axis, 120, baseline, 10, TRUE, .81, .88, .96,
+          live ? 1 : .67, TRUE);
 
+    /* The full track is visible even before a stream is connected. */
     round_path(cr, x, y, width, 9, 4.0);
-    rgba(cr, .17, .25, .33, 1);
+    rgba(cr, .15, .24, .33, 1);
     cairo_fill_preserve(cr);
-    rgba(cr, .48, .63, .77, .26);
-    cairo_set_line_width(cr, .7);
+    rgba(cr, .51, .70, .84, .48);
+    cairo_set_line_width(cr, .8);
     cairo_stroke(cr);
 
-    /* Guide ticks at 50% and central zero tick. */
     cairo_new_path(cr);
     cairo_move_to(cr, x + width * .25, y + 2);
     cairo_line_to(cr, x + width * .25, y + 7);
     cairo_move_to(cr, x + width * .75, y + 2);
     cairo_line_to(cr, x + width * .75, y + 7);
-    rgba(cr, .80, .91, 1, .16);
+    rgba(cr, .85, .93, 1, .27);
     cairo_set_line_width(cr, .8);
     cairo_stroke(cr);
 
-    double amount = fabs(clipped) * (width * .5 - 2);
-    if (amount >= .3) {
-        round_path(cr, clipped < 0 ? mid - amount : mid,
-                   y + 1.0, amount, 7, 2.5);
-        if (clipped < 0) rgba(cr, 1, .65, .34, .97);
-        else accent_color(cr, .97);
-        cairo_fill(cr);
-    }
+    /* A visible neutral capsule remains at zero. A small movement
+       grows from the center: amber to the left, blue to the right. */
+    const double amount = live ? fmax(3.5, magnitude * (width * .5 - 3)) : 3.5;
+    round_path(cr, velocity < 0 ? mid - amount : mid,
+               y + 1.4, amount, 6.2, 2.0);
+    if (!live) rgba(cr, .52, .62, .73, .75);
+    else if (velocity < 0) rgba(cr, 1, .64, .30, 1);
+    else accent_color(cr, 1);
+    cairo_fill(cr);
+
+    /* Prominent zero, drawn last so that it cannot be hidden by the bar. */
     cairo_new_path(cr);
-    cairo_move_to(cr, mid, y - 1);
-    cairo_line_to(cr, mid, y + 10);
-    rgba(cr, .94, .97, 1, .92);
-    cairo_set_line_width(cr, 1.1);
+    cairo_move_to(cr, mid, y - 1.4);
+    cairo_line_to(cr, mid, y + 10.4);
+    rgba(cr, .95, .98, 1, .95);
+    cairo_set_line_width(cr, 1.25);
     cairo_stroke(cr);
 
     char value[24];
-    snprintf(value, sizeof value, "%+.0f", velocity);
+    if (live) snprintf(value, sizeof value, "%+.1f", velocity);
+    else snprintf(value, sizeof value, "--");
     label(cr, value, 260, baseline, 8.2, TRUE,
-          clipped < 0 ? 1.0 : .68,
-          clipped < 0 ? .78 : .86,
-          clipped < 0 ? .54 : 1.0,
-          1, TRUE);
+          velocity < 0 ? 1 : .72,
+          velocity < 0 ? .79 : .89,
+          velocity < 0 ? .55 : 1,
+          live ? 1 : .57, TRUE);
 }
 
 static void motion_screen(cairo_t *cr, const wupstream_input_t *in,
                           gboolean have) {
     screen_frame(cr);
     if (!have) {
-        circle_path(cr, 220, 105, 13);
-        rgba(cr, .42, .49, .58, .45);
-        cairo_set_line_width(cr, 1.4);
+        /* Present gauges in idle state, not a blank display. The tracks
+           are deliberately muted until actual pad packets arrive. */
+        label(cr, "WAITING FOR GAMEPAD", 220, 73, 9.5, TRUE,
+              .79, .88, .98, .95, TRUE);
+        cairo_new_path(cr);
+        cairo_move_to(cr, 114, 79);
+        cairo_line_to(cr, 326, 79);
+        rgba(cr, .49, .64, .78, .24);
+        cairo_set_line_width(cr, .8);
         cairo_stroke(cr);
-        label(cr, "NO GAMEPAD DATA", 220, 133, 12, TRUE,
-              .81, .87, .95, 1, TRUE);
-        label(cr, "Start the stream to monitor inputs", 220, 151, 9,
-              FALSE, .58, .67, .78, 1, TRUE);
+
+        label(cr, "GYRO (deg/s)", 120, 92, 9, TRUE,
+              .71, .81, .91, .96, FALSE);
+        gyro_gauge(cr, "X", 0, 109, FALSE);
+        gyro_gauge(cr, "Y", 0, 132, FALSE);
+        gyro_gauge(cr, "Z", 0, 155, FALSE);
+        label(cr, "TOUCH", 302, 92, 9, TRUE,
+              .71, .81, .91, .96, TRUE);
+        round_path(cr, 278, 100, 49, 28, 2.5);
+        rgba(cr, .08, .16, .24, .96);
+        cairo_fill_preserve(cr);
+        rgba(cr, .59, .76, .92, .60);
+        cairo_set_line_width(cr, .8);
+        cairo_stroke(cr);
+        label(cr, "--", 302, 143, 8, FALSE,
+              .58, .68, .78, 1, TRUE);
+        label(cr, "Start stream to read sensors", 220, 176, 9, FALSE,
+              .60, .73, .86, 1, TRUE);
         return;
     }
 
@@ -356,9 +383,9 @@ static void motion_screen(cairo_t *cr, const wupstream_input_t *in,
 
     label(cr, "GYRO (deg/s)", 120, 92, 9, TRUE,
           .71, .81, .91, .96, FALSE);
-    gyro_gauge(cr, "X", in->gyro[0], 109);
-    gyro_gauge(cr, "Y", in->gyro[1], 132);
-    gyro_gauge(cr, "Z", in->gyro[2], 155);
+    gyro_gauge(cr, "X", in->gyro[0], 109, TRUE);
+    gyro_gauge(cr, "Y", in->gyro[1], 132, TRUE);
+    gyro_gauge(cr, "Z", in->gyro[2], 155, TRUE);
 
     /* Miniature touchscreen, independent of the gyroscope gauges.
        The GamePad touch range is 854 x 480 (coordinate 0..853, 0..479). */
@@ -453,7 +480,8 @@ static gboolean viz_draw(GtkWidget *w, cairo_t *cr, gpointer unused) {
 GtkWidget *pad_viz_new(void) {
     viz_state_t *st = g_new0(viz_state_t, 1);
     GtkWidget *w = gtk_drawing_area_new();
-    gtk_widget_set_size_request(w, 384, 210);
+    /* WUP_V3_SMALL_VISUAL: shorter natural height, same aspect-ratio fit. */
+    gtk_widget_set_size_request(w, 330, 180);
     g_object_set_data_full(G_OBJECT(w), "viz-state", st, g_free);
     g_signal_connect(w, "draw", G_CALLBACK(viz_draw), NULL);
     return w;

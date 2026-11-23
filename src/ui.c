@@ -33,6 +33,8 @@ struct ui_t {
     GtkWidget *cmd_combo;
     GtkWidget *stick_entries[8];
     GtkWidget *viz_area, *black_chk;
+    GtkWidget *row1, *row2, *input_cols; /* adaptive layout */
+    int stream_icon_mode; /* update button icon only on state changes */
     /* audio */
     GtkWidget *aout_chk, *ain_chk, *monitor_combo;
     /* pad */
@@ -64,17 +66,69 @@ static GtkWidget *mk_label(const char *t) {
     return l;
 }
 
+/* WUP_V3_MODERN_DENSE_UI: symbolic icons use the system GTK theme (no PNG dependencies).
+ * A small text fallback keeps controls usable with minimal icon themes. */
+static gboolean has_symbol(const char *name) {
+    return gtk_icon_theme_has_icon(gtk_icon_theme_get_default(), name);
+}
+
+static GtkWidget *symbol_image(const char *name) {
+    return gtk_image_new_from_icon_name(name, GTK_ICON_SIZE_MENU);
+}
+
+static void button_symbol(GtkWidget *button, const char *name) {
+    if (!has_symbol(name)) return;
+    gtk_button_set_image(GTK_BUTTON(button), symbol_image(name));
+    gtk_button_set_always_show_image(GTK_BUTTON(button), TRUE);
+    gtk_button_set_image_position(GTK_BUTTON(button), GTK_POS_LEFT);
+}
+
+static GtkWidget *symbol_button(const char *name, const char *fallback,
+                                const char *tip) {
+    GtkWidget *button = gtk_button_new_with_label(fallback);
+    if (has_symbol(name)) {
+        gtk_button_set_label(GTK_BUTTON(button), NULL);
+        button_symbol(button, name);
+    }
+    gtk_widget_set_tooltip_text(button, tip);
+    gtk_style_context_add_class(gtk_widget_get_style_context(button), "wup-icon-button");
+    return button;
+}
+
+static const char *section_symbol(const char *title) {
+    if (!strcmp(title, "GamePad Connection")) return "network-wireless-symbolic";
+    if (!strcmp(title, "Video Source")) return "video-display-symbolic";
+    if (!strcmp(title, "Quality")) return "preferences-system-symbolic";
+    if (!strcmp(title, "Audio")) return "audio-volume-high-symbolic";
+    if (!strcmp(title, "Inputs")) return "input-gaming-symbolic";
+    if (!strcmp(title, "Gamepad (evdev)")) return "input-gaming-symbolic";
+    if (!strcmp(title, "Keyboard + mouse")) return "input-keyboard-symbolic";
+    if (!strcmp(title, "Touch + motion")) return "input-touchpad-symbolic";
+    return "applications-system-symbolic";
+}
+
 static GtkWidget *mk_spin(int min, int max, int val) {
     GtkAdjustment *a = gtk_adjustment_new(val, min, max, 1, 10, 0);
     return gtk_spin_button_new(a, 1, 0);
 }
 
 /* section frame with title */
+/* Section headings have theme-native symbolic icons and clean frame chrome. */
 static GtkWidget *mk_section(const char *title) {
     GtkWidget *f = gtk_frame_new(NULL);
-    GtkWidget *vb = gtk_box_new(GTK_ORIENTATION_VERTICAL, 4);
+    GtkWidget *vb = gtk_box_new(GTK_ORIENTATION_VERTICAL, 2);
     gtk_container_set_border_width(GTK_CONTAINER(vb), 4);
-    gtk_frame_set_label_widget(GTK_FRAME(f), mk_label(title));
+    GtkWidget *head = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 5);
+    const char *icon = section_symbol(title);
+    if (has_symbol(icon)) {
+        GtkWidget *img = symbol_image(icon);
+        gtk_box_pack_start(GTK_BOX(head), img, FALSE, FALSE, 0);
+    }
+    GtkWidget *name = mk_label(title);
+    gtk_style_context_add_class(gtk_widget_get_style_context(name),
+                                "wup-section-title");
+    gtk_box_pack_start(GTK_BOX(head), name, FALSE, FALSE, 0);
+    gtk_frame_set_label_widget(GTK_FRAME(f), head);
     gtk_container_add(GTK_CONTAINER(f), vb);
     return vb;
 }
@@ -210,7 +264,7 @@ static GtkWidget *build_source_section(ui_t *u) {
     GtkWidget *sec = mk_section("Video Source");
     int r = 0;
     GtkWidget *grid = gtk_grid_new();
-    gtk_grid_set_row_spacing(GTK_GRID(grid), 3);
+    gtk_grid_set_row_spacing(GTK_GRID(grid), 1);
     gtk_grid_set_column_spacing(GTK_GRID(grid), 8);
     gtk_box_pack_start(GTK_BOX(sec), grid, FALSE, FALSE, 0);
 
@@ -245,7 +299,7 @@ static GtkWidget *build_source_section(ui_t *u) {
     refresh_windows(u);
     g_signal_connect(u->win_combo, "changed", G_CALLBACK(on_win_changed), u);
     gtk_box_pack_start(GTK_BOX(u->win_row), u->win_combo, TRUE, TRUE, 0);
-    GtkWidget *wbtn = gtk_button_new_with_label("R");
+    GtkWidget *wbtn = symbol_button("view-refresh-symbolic", "R", "Refresh window list");
     g_signal_connect(wbtn, "clicked", G_CALLBACK(on_refresh_windows), u);
     gtk_box_pack_start(GTK_BOX(u->win_row), wbtn, FALSE, FALSE, 0);
     gtk_grid_attach(GTK_GRID(grid), u->win_row, 0, r++, 2, 1);
@@ -254,6 +308,7 @@ static GtkWidget *build_source_section(ui_t *u) {
     u->region_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
     gtk_box_pack_start(GTK_BOX(u->region_box), mk_label("Region:"), FALSE, FALSE, 0);
     GtkWidget *rbtn = gtk_button_new_with_label("Select...");
+    button_symbol(rbtn, "edit-select-all-symbolic");
     g_signal_connect(rbtn, "clicked", G_CALLBACK(on_region_clicked), u);
     u->region_lbl = gtk_label_new("");
     gtk_label_set_xalign(GTK_LABEL(u->region_lbl), 0);
@@ -337,40 +392,50 @@ static void on_save_preset(GtkButton *b, ui_t *u) {
 
 static GtkWidget *build_quality_section(ui_t *u) {
     GtkWidget *sec = mk_section("Quality");
-    int r = 0;
     GtkWidget *grid = gtk_grid_new();
-    gtk_grid_set_row_spacing(GTK_GRID(grid), 3);
+    gtk_grid_set_row_spacing(GTK_GRID(grid), 2);
     gtk_grid_set_column_spacing(GTK_GRID(grid), 8);
     gtk_box_pack_start(GTK_BOX(sec), grid, FALSE, FALSE, 0);
 
+    /* Two rows instead of four. Preserve original callbacks and controls. */
     u->preset_combo = gtk_combo_box_text_new();
-    gtk_widget_set_hexpand(u->preset_combo, FALSE);
     refresh_presets(u);
     g_signal_connect(u->preset_combo, "changed", G_CALLBACK(on_preset_changed), u);
-    grid_row(grid, &r, "Preset:", u->preset_combo);
+    gtk_grid_attach(GTK_GRID(grid), mk_label("Preset:"), 0, 0, 1, 1);
+    gtk_grid_attach(GTK_GRID(grid), u->preset_combo, 1, 0, 1, 1);
 
     u->crf_spin = mk_spin(0, 51, u->s->crf);
+    gtk_widget_set_tooltip_text(u->crf_spin, "Lower CRF improves image quality");
     g_signal_connect(u->crf_spin, "value-changed", G_CALLBACK(on_quality_spin), u);
-    grid_row(grid, &r, "CRF (lower = better):", u->crf_spin);
+    gtk_grid_attach(GTK_GRID(grid), mk_label("CRF:"), 2, 0, 1, 1);
+    gtk_grid_attach(GTK_GRID(grid), u->crf_spin, 3, 0, 1, 1);
 
     u->kbps_spin = mk_spin(0, 50000, u->s->kbps);
+    gtk_widget_set_tooltip_text(u->kbps_spin, "Maximum bitrate in kbps; 0 = automatic");
     g_signal_connect(u->kbps_spin, "value-changed", G_CALLBACK(on_quality_spin), u);
-    grid_row(grid, &r, "Max bitrate (kbps, 0=auto):", u->kbps_spin);
+    gtk_grid_attach(GTK_GRID(grid), mk_label("Bitrate:"), 0, 1, 1, 1);
+    gtk_grid_attach(GTK_GRID(grid), u->kbps_spin, 1, 1, 1, 1);
 
     u->gop_spin = mk_spin(0, 600, u->s->gop);
+    gtk_widget_set_tooltip_text(u->gop_spin, "Keyframe interval; 0 = automatic");
     g_signal_connect(u->gop_spin, "value-changed", G_CALLBACK(on_quality_spin), u);
-    grid_row(grid, &r, "Keyframe interval:", u->gop_spin);
+    gtk_grid_attach(GTK_GRID(grid), mk_label("GOP:"), 2, 1, 1, 1);
+    gtk_grid_attach(GTK_GRID(grid), u->gop_spin, 3, 1, 1, 1);
 
-    u->lowlat_chk = gtk_check_button_new_with_label(
-        "Low latency (x264 zerolatency: no lookahead, no B-frames)");
+    GtkWidget *line = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+    gtk_box_pack_start(GTK_BOX(sec), line, FALSE, FALSE, 0);
+    u->lowlat_chk = gtk_check_button_new_with_label("Low latency");
+    gtk_widget_set_tooltip_text(u->lowlat_chk,
+        "x264 zerolatency: no lookahead, no B-frames");
     gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(u->lowlat_chk), u->s->low_latency);
     g_signal_connect(u->lowlat_chk, "toggled", G_CALLBACK(on_lowlat_toggled), u);
-    gtk_box_pack_start(GTK_BOX(sec), u->lowlat_chk, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(line), u->lowlat_chk, TRUE, TRUE, 0);
 
-    GtkWidget *sbtn = gtk_button_new_with_label("Save current values as preset");
+    GtkWidget *sbtn = gtk_button_new_with_label("Save preset");
+    gtk_widget_set_tooltip_text(sbtn, "Save quality settings as a named preset");
+    button_symbol(sbtn, "document-save-symbolic");
     g_signal_connect(sbtn, "clicked", G_CALLBACK(on_save_preset), u);
-    gtk_box_pack_start(GTK_BOX(sec), sbtn, FALSE, FALSE, 0);
-
+    gtk_box_pack_end(GTK_BOX(line), sbtn, FALSE, FALSE, 0);
     return frame_of(sec);
 }
 
@@ -530,7 +595,7 @@ static void on_key_help(GtkButton *b, ui_t *u) {
         "  as JSON in settings.json - one per app if you like.";
     GtkWidget *dlg = gtk_dialog_new_with_buttons("Key mapping help",
         GTK_WINDOW(gtk_widget_get_toplevel(GTK_WIDGET(u->cmd_combo))),
-        GTK_DIALOG_MODAL, "_Close", GTK_RESPONSE_CLOSE);
+        GTK_DIALOG_MODAL, "_Close", GTK_RESPONSE_CLOSE, NULL);
     GtkWidget *content = gtk_dialog_get_content_area(GTK_DIALOG(dlg));
     GtkWidget *sw = gtk_scrolled_window_new(NULL, NULL);
     gtk_widget_set_size_request(sw, 420, 380);
@@ -605,8 +670,8 @@ static void on_key_edited(GtkEntry *e, ui_t *u) {
 static GtkWidget *build_input_section(ui_t *u) {
     GtkWidget *sec = mk_section("Inputs");
 
-    GtkWidget *mrow = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
-    gtk_box_pack_start(GTK_BOX(mrow), mk_label("Injection mode:"), FALSE, FALSE, 0);
+    GtkWidget *mrow = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 5);
+    gtk_box_pack_start(GTK_BOX(mrow), mk_label("Mode:"), FALSE, FALSE, 0);
     u->mode_combo = gtk_combo_box_text_new();
     gtk_widget_set_hexpand(u->mode_combo, FALSE);
     gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(u->mode_combo), "Virtual gamepad (evdev)");
@@ -616,31 +681,30 @@ static GtkWidget *build_input_section(ui_t *u) {
     gtk_box_pack_start(GTK_BOX(mrow), u->mode_combo, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(sec), mrow, FALSE, FALSE, 0);
 
-    /* 3 columns */
-    GtkWidget *cols = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
+    /* Two columns: pad + sensors, keyboard mappings */
+    GtkWidget *cols = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 7);
+    u->input_cols = cols;
     gtk_box_pack_start(GTK_BOX(sec), cols, FALSE, FALSE, 0);
 
     /* gamepad column */
     GtkWidget *gp = mk_section("Gamepad (evdev)");
     gtk_box_pack_start(GTK_BOX(cols), frame_of(gp), TRUE, TRUE, 0);
     {
-        GtkWidget *grid = gtk_grid_new();
-        gtk_grid_set_row_spacing(GTK_GRID(grid), 3);
-        gtk_grid_set_column_spacing(GTK_GRID(grid), 8);
-        gtk_box_pack_start(GTK_BOX(gp), grid, FALSE, FALSE, 0);
-        int r = 0;
+        GtkWidget *padopts = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+        gtk_box_pack_start(GTK_BOX(gp), padopts, FALSE, FALSE, 0);
+        gtk_box_pack_start(GTK_BOX(padopts), mk_label("Deadzone:"), FALSE, FALSE, 0);
         u->dz_spin = mk_spin(0, 500, u->s->input.deadzone);
         g_signal_connect(u->dz_spin, "value-changed", G_CALLBACK(on_input_spin), u);
-        grid_row(grid, &r, "Stick deadzone:", u->dz_spin);
-        u->invert_chk = gtk_check_button_new_with_label("Invert Y axis");
+        gtk_box_pack_start(GTK_BOX(padopts), u->dz_spin, FALSE, FALSE, 0);
+        u->invert_chk = gtk_check_button_new_with_label("Invert Y");
+        gtk_widget_set_tooltip_text(u->invert_chk, "Invert GamePad stick Y axis");
         gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(u->invert_chk), u->s->input.invert_y);
         g_signal_connect(u->invert_chk, "toggled", G_CALLBACK(on_input_toggled), u);
-        gtk_box_pack_start(GTK_BOX(gp), u->invert_chk, FALSE, FALSE, 0);
+        gtk_box_pack_start(GTK_BOX(padopts), u->invert_chk, FALSE, FALSE, 0);
         u->viz_area = pad_viz_new();
+        gtk_widget_set_tooltip_text(u->viz_area, "Live GamePad buttons, sticks, touch and gyro axes");
+        gtk_widget_set_hexpand(u->viz_area, TRUE);
         gtk_box_pack_start(GTK_BOX(gp), u->viz_area, FALSE, FALSE, 0);
-        gtk_box_pack_start(GTK_BOX(gp),
-            mk_label("Live pad state (buttons, sticks, gyro)"),
-            FALSE, FALSE, 0);
     }
 
     /* kb/mouse column */
@@ -661,30 +725,31 @@ static GtkWidget *build_input_section(ui_t *u) {
             refresh_cmd_presets(u);
             g_signal_connect(u->cmd_combo, "changed", G_CALLBACK(on_cmd_preset_changed), u);
             gtk_box_pack_start(GTK_BOX(prow), u->cmd_combo, TRUE, TRUE, 0);
-            GtkWidget *hb = gtk_button_new_with_label("?");
+            GtkWidget *hb = symbol_button("help-browser-symbolic", "?", "Key mapping syntax help");
             gtk_widget_set_tooltip_text(hb, "Key syntax help");
             g_signal_connect(hb, "clicked", G_CALLBACK(on_key_help), u);
             gtk_box_pack_start(GTK_BOX(prow), hb, FALSE, FALSE, 0);
             GtkWidget *sv = gtk_button_new_with_label("Save");
+            button_symbol(sv, "document-save-symbolic");
             gtk_widget_set_tooltip_text(sv, "Save current mapping as a named preset");
             g_signal_connect(sv, "clicked", G_CALLBACK(on_cmd_save), u);
             gtk_box_pack_start(GTK_BOX(prow), sv, FALSE, FALSE, 0);
-            GtkWidget *dl = gtk_button_new_with_label("Del");
+            GtkWidget *dl = symbol_button("edit-delete-symbolic", "Del", "Delete current mapping preset");
             g_signal_connect(dl, "clicked", G_CALLBACK(on_cmd_delete), u);
             gtk_box_pack_start(GTK_BOX(prow), dl, FALSE, FALSE, 0);
         }
-        gtk_box_pack_start(GTK_BOX(kb), mk_label("Button -> key (chords ok: Ctrl+A):"), FALSE, FALSE, 0);
+        gtk_box_pack_start(GTK_BOX(kb), mk_label("Buttons -> keys  (Ctrl+A supported):"), FALSE, FALSE, 0);
         GtkWidget *kmid = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
         gtk_box_pack_start(GTK_BOX(kb), kmid, FALSE, FALSE, 0);
         GtkWidget *kgrid = gtk_grid_new();
-        gtk_grid_set_row_spacing(GTK_GRID(kgrid), 1);
-        gtk_grid_set_column_spacing(GTK_GRID(kgrid), 6);
+        gtk_grid_set_row_spacing(GTK_GRID(kgrid), 0);
+        gtk_grid_set_column_spacing(GTK_GRID(kgrid), 4);
         for (int i = 0; i < 17; i++) {   /* TV excluded: reserved for screen switching */
             int col = (i / 9) * 2, row = i % 9;
             gtk_grid_attach(GTK_GRID(kgrid), btn_icon_widget(i), col, row, 1, 1);
             u->key_entries[i] = gtk_entry_new();
             gtk_entry_set_text(GTK_ENTRY(u->key_entries[i]), u->s->input.keys[i]);
-            gtk_entry_set_width_chars(GTK_ENTRY(u->key_entries[i]), 12);
+            gtk_entry_set_width_chars(GTK_ENTRY(u->key_entries[i]), 8);
             g_signal_connect(u->key_entries[i], "changed", G_CALLBACK(on_key_edited), u);
             gtk_grid_attach(GTK_GRID(kgrid), u->key_entries[i], col + 1, row, 1, 1);
         }
@@ -694,57 +759,58 @@ static GtkWidget *build_input_section(ui_t *u) {
         gtk_box_pack_start(GTK_BOX(kmid), sbox, FALSE, FALSE, 0);
         gtk_box_pack_start(GTK_BOX(sbox), mk_label("Stick -> key:"), FALSE, FALSE, 0);
         GtkWidget *sgrid = gtk_grid_new();
-        gtk_grid_set_row_spacing(GTK_GRID(sgrid), 1);
+        gtk_grid_set_row_spacing(GTK_GRID(sgrid), 0);
         gtk_grid_set_column_spacing(GTK_GRID(sgrid), 4);
         for (int i = 0; i < 8; i++) {
             gtk_grid_attach(GTK_GRID(sgrid), mk_label(stick_dir_names[i]), 0, i, 1, 1);
             u->stick_entries[i] = gtk_entry_new();
             gtk_entry_set_text(GTK_ENTRY(u->stick_entries[i]), u->s->input.stick_keys[i]);
-            gtk_entry_set_width_chars(GTK_ENTRY(u->stick_entries[i]), 10);
+            gtk_entry_set_width_chars(GTK_ENTRY(u->stick_entries[i]), 7);
             g_signal_connect(u->stick_entries[i], "changed", G_CALLBACK(on_stick_key_edited), u);
             gtk_grid_attach(GTK_GRID(sgrid), u->stick_entries[i], 1, i, 1, 1);
         }
         gtk_box_pack_start(GTK_BOX(sbox), sgrid, FALSE, FALSE, 0);
     }
 
-    /* shared column */
-    GtkWidget *sh = mk_section("Shared (touch + gyro)");
-    gtk_box_pack_start(GTK_BOX(cols), frame_of(sh), TRUE, TRUE, 0);
+    /* Two compact rows under the visualizer, with full tooltip descriptions. */
+    GtkWidget *sh = mk_section("Touch + motion");
+    gtk_box_pack_start(GTK_BOX(gp), frame_of(sh), FALSE, FALSE, 0);
     {
-        GtkWidget *grid = gtk_grid_new();
-        gtk_grid_set_row_spacing(GTK_GRID(grid), 3);
-        gtk_grid_set_column_spacing(GTK_GRID(grid), 8);
-        gtk_box_pack_start(GTK_BOX(sh), grid, FALSE, FALSE, 0);
-        int r = 0;
-
-        u->sens_spin = mk_spin(10, 400, u->s->input.sensitivity);
-        g_signal_connect(u->sens_spin, "value-changed", G_CALLBACK(on_input_spin), u);
-        grid_row(grid, &r, "Mouse/stick sens %:", u->sens_spin);
-
-        u->touch_chk = gtk_check_button_new_with_label("Touch = mouse (works in gamepad mode too)");
-        gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(u->touch_chk), u->s->input.touch_as_mouse);
+        GtkWidget *line = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
+        gtk_box_pack_start(GTK_BOX(sh), line, FALSE, FALSE, 0);
+        u->touch_chk = gtk_check_button_new_with_label("Touch -> mouse");
+        gtk_widget_set_tooltip_text(u->touch_chk,
+            "Use the GamePad touchscreen as a mouse, including in virtual gamepad mode");
+        gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(u->touch_chk),
+                                     u->s->input.touch_as_mouse);
         g_signal_connect(u->touch_chk, "toggled", G_CALLBACK(on_input_toggled), u);
-        gtk_box_pack_start(GTK_BOX(sh), u->touch_chk, FALSE, FALSE, 0);
+        gtk_box_pack_start(GTK_BOX(line), u->touch_chk, TRUE, TRUE, 0);
 
+        gtk_box_pack_start(GTK_BOX(line), mk_label("Gyro:"), FALSE, FALSE, 0);
         u->gyro_combo = gtk_combo_box_text_new();
-    gtk_widget_set_hexpand(u->gyro_combo, FALSE);
         gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(u->gyro_combo), "Off");
         gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(u->gyro_combo), "Mouse");
         gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(u->gyro_combo), "Right stick");
         gtk_combo_box_set_active(GTK_COMBO_BOX(u->gyro_combo), u->s->input.gyro_mode);
         g_signal_connect(u->gyro_combo, "changed", G_CALLBACK(on_gyro_changed), u);
-        grid_row(grid, &r, "Gyroscope:", u->gyro_combo);
+        gtk_box_pack_start(GTK_BOX(line), u->gyro_combo, FALSE, FALSE, 0);
 
+        GtkWidget *line2 = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 5);
+        gtk_box_pack_start(GTK_BOX(sh), line2, FALSE, FALSE, 0);
+        gtk_box_pack_start(GTK_BOX(line2), mk_label("Input %:"), FALSE, FALSE, 0);
+        u->sens_spin = mk_spin(10, 400, u->s->input.sensitivity);
+        g_signal_connect(u->sens_spin, "value-changed", G_CALLBACK(on_input_spin), u);
+        gtk_box_pack_start(GTK_BOX(line2), u->sens_spin, FALSE, FALSE, 0);
+        gtk_box_pack_start(GTK_BOX(line2), mk_label("Gyro %:"), FALSE, FALSE, 0);
         u->gyro_sens_spin = mk_spin(10, 500, u->s->input.gyro_sens);
-        g_signal_connect(u->gyro_sens_spin, "value-changed", G_CALLBACK(on_input_spin), u);
-        grid_row(grid, &r, "Gyro sens %:", u->gyro_sens_spin);
+        g_signal_connect(u->gyro_sens_spin, "value-changed",
+                         G_CALLBACK(on_input_spin), u);
+        gtk_box_pack_start(GTK_BOX(line2), u->gyro_sens_spin, FALSE, FALSE, 0);
 
-        GtkWidget *cal = gtk_button_new_with_label("Calibrate gyroscope");
+        GtkWidget *cal = symbol_button("view-refresh-symbolic", "Cal",
+                                      "Calibrate gyroscope: hold pad still for ~3 seconds while streaming");
         g_signal_connect(cal, "clicked", G_CALLBACK(on_calib_clicked), u);
-        gtk_box_pack_start(GTK_BOX(sh), cal, FALSE, FALSE, 0);
-        gtk_box_pack_start(GTK_BOX(sh),
-            mk_label("Keep the pad flat and still for ~3 s\nwhile streaming."),
-            FALSE, FALSE, 0);
+        gtk_box_pack_end(GTK_BOX(line2), cal, FALSE, FALSE, 0);
     }
 
     return frame_of(sec);
@@ -833,7 +899,7 @@ static GtkWidget *build_audio_section(ui_t *u) {
     refresh_monitors(u);
     g_signal_connect(u->monitor_combo, "changed", G_CALLBACK(on_monitor_changed), u);
     gtk_box_pack_start(GTK_BOX(mrow), u->monitor_combo, TRUE, TRUE, 0);
-    GtkWidget *mbtn = gtk_button_new_with_label("R");
+    GtkWidget *mbtn = symbol_button("view-refresh-symbolic", "R", "Refresh audio inputs");
     g_signal_connect(mbtn, "clicked", G_CALLBACK(on_refresh_monitors), u);
     gtk_box_pack_start(GTK_BOX(mrow), mbtn, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(sec), mrow, FALSE, FALSE, 0);
@@ -878,41 +944,65 @@ static void on_stream_clicked(GtkButton *b, ui_t *u) {
 
 static GtkWidget *build_conn_section(ui_t *u) {
     GtkWidget *sec = mk_section("GamePad Connection");
-    int r = 0;
-    GtkWidget *grid = gtk_grid_new();
-    gtk_grid_set_row_spacing(GTK_GRID(grid), 3);
-    gtk_grid_set_column_spacing(GTK_GRID(grid), 8);
-    gtk_box_pack_start(GTK_BOX(sec), grid, FALSE, FALSE, 0);
-
-    GtkWidget *irow = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
+    GtkWidget *line1 = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 7);
+    gtk_box_pack_start(GTK_BOX(sec), line1, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(line1), mk_label("Pad IP:"), FALSE, FALSE, 0);
     u->ip_entry = gtk_entry_new();
     gtk_entry_set_text(GTK_ENTRY(u->ip_entry), u->s->pad_ip);
-    gtk_entry_set_width_chars(GTK_ENTRY(u->ip_entry), 16);
+    gtk_entry_set_width_chars(GTK_ENTRY(u->ip_entry), 13);
+    gtk_entry_set_max_width_chars(GTK_ENTRY(u->ip_entry), 15);
     gtk_entry_set_placeholder_text(GTK_ENTRY(u->ip_entry), "auto");
+    gtk_widget_set_tooltip_text(u->ip_entry,
+        "GamePad IPv4 address. Leave empty for automatic discovery.");
     g_signal_connect(u->ip_entry, "changed", G_CALLBACK(on_ip_changed), u);
-    gtk_box_pack_start(GTK_BOX(irow), u->ip_entry, FALSE, FALSE, 0);
-    grid_row(grid, &r, "Pad IP:", irow);
+    gtk_box_pack_start(GTK_BOX(line1), u->ip_entry, FALSE, FALSE, 0);
 
-    u->autostart_chk = gtk_check_button_new_with_label("Start streaming automatically");
-    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(u->autostart_chk), u->s->autostart_stream);
+    u->autostart_chk = gtk_check_button_new_with_label("Auto-start");
+    gtk_widget_set_tooltip_text(u->autostart_chk,
+        "Start the stream automatically when the application opens");
+    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(u->autostart_chk),
+                                 u->s->autostart_stream);
     g_signal_connect(u->autostart_chk, "toggled", G_CALLBACK(on_autostart_toggled), u);
-    gtk_box_pack_start(GTK_BOX(sec), u->autostart_chk, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(line1), u->autostart_chk, FALSE, FALSE, 0);
 
-    GtkWidget *gponly_chk = gtk_check_button_new_with_label(
-        "Gamepad-only mode (no capture, inputs stay live)");
+    GtkWidget *line2 = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+    gtk_box_pack_start(GTK_BOX(sec), line2, FALSE, FALSE, 0);
+    GtkWidget *gponly_chk = gtk_check_button_new_with_label("GamePad-only mode");
+    gtk_widget_set_tooltip_text(gponly_chk,
+        "Keep GamePad inputs live with no PC video capture. Useful for calibration.");
     gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(gponly_chk), u->s->gamepad_only);
     g_signal_connect(gponly_chk, "toggled", G_CALLBACK(on_gamepad_only_toggled), u);
-    gtk_box_pack_start(GTK_BOX(sec), gponly_chk, FALSE, FALSE, 0);
-    u->black_chk = gtk_check_button_new_with_label("Send black screen instead of test image");
-    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(u->black_chk), u->s->gamepad_only_black);
-    g_signal_connect(u->black_chk, "toggled", G_CALLBACK(on_black_toggled), u);
-    gtk_box_pack_start(GTK_BOX(sec), u->black_chk, FALSE, FALSE, 0);
-    gtk_widget_set_sensitive(u->black_chk, u->s->gamepad_only);
-    gtk_box_pack_start(GTK_BOX(sec),
-        mk_label("Useful to calibrate the gyroscope or test inputs\nwithout streaming your screen."),
-        FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(line2), gponly_chk, FALSE, FALSE, 0);
 
+    u->black_chk = gtk_check_button_new_with_label("Black screen");
+    gtk_widget_set_tooltip_text(u->black_chk,
+        "Show black instead of the test image in GamePad-only mode");
+    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(u->black_chk),
+                                 u->s->gamepad_only_black);
+    g_signal_connect(u->black_chk, "toggled", G_CALLBACK(on_black_toggled), u);
+    gtk_box_pack_start(GTK_BOX(line2), u->black_chk, FALSE, FALSE, 0);
+    gtk_widget_set_sensitive(u->black_chk, u->s->gamepad_only);
     return frame_of(sec);
+}
+
+/* GTK3 has no CSS media queries. Switch only the main pairs from
+ * horizontal to vertical when a small settings window is requested.
+ * Within either mode we never require a horizontal scrollbar. */
+static gboolean on_settings_configure(GtkWidget *widget,
+                                      GdkEventConfigure *ev, gpointer data) {
+    (void)widget;
+    ui_t *u = data;
+    GtkOrientation upper = ev->width < 840 ? GTK_ORIENTATION_VERTICAL
+                                            : GTK_ORIENTATION_HORIZONTAL;
+    GtkOrientation lower = ev->width < 850 ? GTK_ORIENTATION_VERTICAL
+                                            : GTK_ORIENTATION_HORIZONTAL;
+    if (u->row1 && gtk_orientable_get_orientation(GTK_ORIENTABLE(u->row1)) != upper)
+        gtk_orientable_set_orientation(GTK_ORIENTABLE(u->row1), upper);
+    if (u->row2 && gtk_orientable_get_orientation(GTK_ORIENTABLE(u->row2)) != upper)
+        gtk_orientable_set_orientation(GTK_ORIENTABLE(u->row2), upper);
+    if (u->input_cols && gtk_orientable_get_orientation(GTK_ORIENTABLE(u->input_cols)) != lower)
+        gtk_orientable_set_orientation(GTK_ORIENTABLE(u->input_cols), lower);
+    return FALSE;
 }
 
 /* ---------- tray / window ---------- */
@@ -987,9 +1077,16 @@ void ui_refresh_status(ui_t *u) {
     int st = server_state(u->srv);
     snprintf(buf, sizeof buf, "Status: %s", server_status(u->srv));
     gtk_label_set_text(GTK_LABEL(u->status_lbl), buf);
-    if (u->stream_btn)
-        gtk_button_set_label(GTK_BUTTON(u->stream_btn),
-            (st == SRV_STREAMING || st == SRV_WAITING_PAD) ? "Stop stream" : "Start stream");
+    if (u->stream_btn) {
+        int active = st == SRV_STREAMING || st == SRV_WAITING_PAD;
+        if (u->stream_icon_mode != active) {
+            gtk_button_set_label(GTK_BUTTON(u->stream_btn),
+                                 active ? "Stop stream" : "Start stream");
+            button_symbol(u->stream_btn, active ? "media-playback-stop-symbolic"
+                                                : "media-playback-start-symbolic");
+            u->stream_icon_mode = active;
+        }
+    }
 }
 
 ui_t *ui_new(settings_t *s, server_t *srv) {
@@ -997,57 +1094,82 @@ ui_t *ui_new(settings_t *s, server_t *srv) {
     u->s = s; u->srv = srv;
 
     u->window = gtk_window_new(GTK_WINDOW_TOPLEVEL);
+    gtk_style_context_add_class(gtk_widget_get_style_context(u->window),
+                                "wup-settings");
+    u->stream_icon_mode = -1;
     gtk_window_set_title(GTK_WINDOW(u->window), "wupstreamd — settings");
     {
         GdkPixbuf *ic = load_icon();
         if (ic) { gtk_window_set_icon(GTK_WINDOW(u->window), ic); }
     }
-    gtk_window_set_default_size(GTK_WINDOW(u->window), 980, 800);
+    gtk_window_set_default_size(GTK_WINDOW(u->window), 960, 745);
     g_signal_connect(u->window, "delete-event", G_CALLBACK(gtk_widget_hide_on_delete), NULL);
-    gtk_widget_set_size_request(u->window, 940, 660);
+    gtk_widget_set_size_request(u->window, 680, 530);
 
     /* single scrollable page: status bar + sections */
     GtkWidget *scroll = gtk_scrolled_window_new(NULL, NULL);
     gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(scroll),
-                                   GTK_POLICY_AUTOMATIC, GTK_POLICY_AUTOMATIC);
+                                   GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC);
     gtk_container_add(GTK_CONTAINER(u->window), scroll);
-    GtkWidget *page = gtk_box_new(GTK_ORIENTATION_VERTICAL, 6);
-    gtk_container_set_border_width(GTK_CONTAINER(page), 6);
+    GtkWidget *page = gtk_box_new(GTK_ORIENTATION_VERTICAL, 4);
+    gtk_container_set_border_width(GTK_CONTAINER(page), 5);
     gtk_container_add(GTK_CONTAINER(scroll), page);
 
     /* top bar: status + stream button */
     GtkWidget *top = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
     gtk_box_pack_start(GTK_BOX(page), top, FALSE, FALSE, 0);
     u->status_lbl = gtk_label_new("Status: ...");
+    gtk_label_set_ellipsize(GTK_LABEL(u->status_lbl), PANGO_ELLIPSIZE_END);
+    gtk_label_set_max_width_chars(GTK_LABEL(u->status_lbl), 65);
     gtk_label_set_xalign(GTK_LABEL(u->status_lbl), 0);
     gtk_box_pack_start(GTK_BOX(top), u->status_lbl, TRUE, TRUE, 0);
+    gtk_widget_set_tooltip_text(u->status_lbl, "Current stream connection status");
     u->stream_btn = gtk_button_new_with_label("Start stream");
+    button_symbol(u->stream_btn, "media-playback-start-symbolic");
     g_signal_connect(u->stream_btn, "clicked", G_CALLBACK(on_stream_clicked), u);
     gtk_box_pack_start(GTK_BOX(top), u->stream_btn, FALSE, FALSE, 0);
 
-    /* compact styling: tighter frames and labels */
+    /* WUP_V3_MODERN_DENSE_UI: scoped dark UI, short controls, legible contrast. */
     GtkCssProvider *css = gtk_css_provider_new();
     gtk_css_provider_load_from_data(css,
-        "* { font-size: 11px; }"
-        "frame { margin: 1px; padding: 3px; }"
-        "frame > label { padding: 0 3px; font-weight: bold; }"
-        "label { padding: 0; }"
-        "button { padding: 2px 6px; }"
-        "entry, combobox, spinbutton { padding: 1px 3px; }"
-        "spinbutton button { min-width: 14px; padding: 0; }"
-        "combobox { min-height: 0px; padding: 0 2px; }"
-        "combobox button { min-height: 0px; padding: 0 2px; }"
-        "combobox text { padding: 0; }"
-        "entry { min-height: 0px; }"
-        "checkbutton { padding: 1px 0; }", -1, NULL);
+        "window.wup-settings { background-color: #111923; color: #dce7f1; }"
+        ".wup-settings * { font-size: 11px; }"
+        ".wup-settings frame { background-color: #192532; "
+        "  border: 1px solid #35485b; border-radius: 8px; margin: 1px; padding: 2px; }"
+        ".wup-settings .wup-section-title { color: #96cdf9; font-weight: bold; "
+        "  padding: 0px 3px 0px 0px; }"
+        ".wup-settings label { padding: 0px; }"
+        ".wup-settings button { min-height: 17px; padding: 1px 6px; "
+        "  border: 1px solid #41576e; border-radius: 5px; "
+        "  background-image: none; background-color: #253547; color: #e7f1fa; }"
+        ".wup-settings button:hover { background-color: #334c66; border-color: #62a6da; }"
+        ".wup-settings button:active { background-color: #285277; }"
+        ".wup-settings button:disabled { color: #81919f; }"
+        ".wup-settings .wup-icon-button { min-width: 20px; padding: 1px 3px; }"
+        ".wup-settings entry { min-height: 17px; padding: 1px 4px; "
+        "  background-color: #0f1b27; color: #e4f0f9; border-radius: 4px; "
+        "  border: 1px solid #3a4c5d; }"
+        ".wup-settings entry:focus { border-color: #4a9ad5; }"
+        ".wup-settings spinbutton { min-height: 17px; padding: 0px; }"
+        ".wup-settings spinbutton entry { min-height: 17px; padding: 1px 3px; }"
+        ".wup-settings spinbutton button { min-width: 14px; min-height: 17px; "
+        "  padding: 0px 1px; }"
+        ".wup-settings combobox { min-height: 17px; padding: 0px; }"
+        ".wup-settings combobox button { min-height: 17px; padding: 0px 4px; }"
+        ".wup-settings checkbutton { min-height: 17px; padding: 0px; }"
+        ".wup-settings checkbutton check { min-width: 14px; min-height: 14px; }"
+        ".wup-settings scrolledwindow { background-color: transparent; }"
+        , -1, NULL);
     gtk_style_context_add_provider_for_screen(
         gdk_screen_get_default(), GTK_STYLE_PROVIDER(css),
         GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
     g_object_unref(css);
 
     /* paired sections so columns stay balanced */
-    GtkWidget *row1 = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
-    GtkWidget *row2 = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+    GtkWidget *row1 = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
+    GtkWidget *row2 = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
+    u->row1 = row1;
+    u->row2 = row2;
     gtk_box_pack_start(GTK_BOX(page), row1, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(page), row2, FALSE, FALSE, 0);
     u->src_frame = build_source_section(u);
@@ -1057,6 +1179,9 @@ ui_t *ui_new(settings_t *s, server_t *srv) {
     gtk_box_pack_start(GTK_BOX(row2), u->qual_frame, TRUE, TRUE, 0);
     gtk_box_pack_start(GTK_BOX(row2), build_audio_section(u), TRUE, TRUE, 0);
     gtk_box_pack_start(GTK_BOX(page), build_input_section(u), FALSE, FALSE, 0);
+    /* Configure-event is emitted when window size changes. */
+    g_signal_connect(u->window, "configure-event",
+                     G_CALLBACK(on_settings_configure), u);
 
     GdkPixbuf *pb = load_icon();
     u->tray = gtk_status_icon_new();
