@@ -291,6 +291,50 @@ static void wup_apply_theme(ui_t *u) {
     /* The question mark remains legible with every JSON theme. */
     g_string_append(css,
         ".wup-settings .wup-help-question { font-weight: 800; min-width: 22px; }");
+    /* WUP_V92_POPUP_THEMES */
+    /* GTK3 menus/tooltips render in their own popup windows, outside
+     * the .wup-settings tree. Reuse the current JSON theme palette. */
+    g_string_append_printf(css,
+        "window.popup, window.popup.background, "
+        "menu, menu.background, "
+        "popover, popover.background, popover > contents { "
+        "background-image:none; background-color:%s; color:%s; "
+        "border-color:%s; }",
+        panel,fg,border);
+    g_string_append_printf(css,
+        "menu menuitem, popover modelbutton { "
+        "background-image:none; background-color:%s; color:%s; "
+        "border-radius:3px; padding:3px 7px; }"
+        "menu menuitem label, popover modelbutton label { color:%s; }"
+        "menu separator { background-color:%s; min-height:1px; }",
+        entry,fg,fg,border);
+    g_string_append_printf(css,
+        "menu menuitem:hover, menu menuitem:selected, "
+        "menu menuitem:active, popover modelbutton:hover, "
+        "popover modelbutton:checked { "
+        "background-image:none; background-color:%s; color:%s; }"
+        "menu menuitem:hover label, menu menuitem:selected label, "
+        "popover modelbutton:hover label, popover modelbutton:checked label "
+        "{ color:%s; }"
+        "menu menuitem:disabled, popover modelbutton:disabled { color:%s; }",
+        active,fg,fg,muted);
+    /* Combo boxes backed by treeviews rather than GtkMenu. */
+    g_string_append_printf(css,
+        "window.popup treeview.view, window.popup treeview, "
+        "combobox window.popup treeview.view { "
+        "background-color:%s; color:%s; }"
+        "window.popup treeview.view:selected, "
+        "window.popup treeview.view:focus:selected { "
+        "background-color:%s; color:%s; }"
+        ".wup-settings combobox arrow { color:%s; }",
+        entry,fg,active,fg,fg);
+    g_string_append_printf(css,
+        "tooltip, tooltip.background, window.tooltip, window.tooltip.background { "
+        "background-image:none; background-color:%s; color:%s; "
+        "border:1px solid %s; border-radius:6px; }"
+        "tooltip label, tooltip.background label, window.tooltip label { "
+        "color:%s; padding:4px 7px; font-size:11px; }",
+        panel,fg,border,fg);
     GError *err=NULL;
     gtk_css_provider_load_from_data(u->theme_css,css->str,-1,&err);
     if (err) {g_warning("Theme CSS: %s",err->message);g_clear_error(&err);}
