@@ -205,6 +205,12 @@ static GPtrArray *wup_load_themes(void) {
     GPtrArray *themes = g_ptr_array_new_with_free_func(wup_theme_free);
     char *exe=g_file_read_link("/proc/self/exe",NULL);
     char *dir=exe ? g_path_get_dirname(exe) : NULL;
+    /* WUP_V911_APPIMAGE_ASSETS: the AppImage binary lives at AppDir/usr/bin,
+     * while JSON assets are installed under AppDir/usr/share/wupstreamd.
+     * This works without XDG_DATA_DIRS or the original source tree. */
+    char *bundled=dir ? g_build_filename(dir,"..","share","wupstreamd","themes",NULL) : NULL;
+    const char *app_root=g_getenv("APPDIR");
+    char *app_data=app_root ? g_build_filename(app_root,"usr","share","wupstreamd","themes",NULL) : NULL;
     char *dev=dir ? g_build_filename(dir,"..","data","themes",NULL) : NULL;
     char *local=g_build_filename("data","themes",NULL);
     /* Precedence, low -> high: system install, source tree, user folder. */
@@ -214,12 +220,14 @@ static GPtrArray *wup_load_themes(void) {
         wup_scan_theme_dir(themes,installed);
         g_free(installed);
     }
+    wup_scan_theme_dir(themes,bundled);
+    wup_scan_theme_dir(themes,app_data);
     wup_scan_theme_dir(themes,dev);
     if (!dev || !g_file_test(dev,G_FILE_TEST_IS_DIR))
         wup_scan_theme_dir(themes,local);
     char *usr=g_build_filename(g_get_user_config_dir(),"wup-stream-serveur","themes",NULL);
     wup_scan_theme_dir(themes,usr);  /* user JSON takes precedence */
-    g_free(usr);g_free(local);g_free(dev);g_free(dir);g_free(exe);
+    g_free(usr);g_free(local);g_free(dev);g_free(app_data);g_free(bundled);g_free(dir);g_free(exe);
     return themes;
 }
 
@@ -274,6 +282,15 @@ static void wup_apply_theme(ui_t *u) {
         ".wup-settings scrolledwindow { background-color:transparent; }"
         ".wup-settings image { color:%s; }",
         entry,fg,border,accent,active,fg,entry,border,fg,active,fg,fg);
+    /* WUP_V910_CHECK_HOVER: highlight only the checkbox outline on pointer
+     * hover. Insensitive options remain grey and never get a hover ring.
+     * This CSS has no effect on widget size or video-streaming performance. */
+    g_string_append_printf(css,
+        ".wup-settings checkbutton:hover check { "
+        "border-color:%s; box-shadow:0 0 0 1px %s; }"
+        ".wup-settings checkbutton:disabled check { "
+        "border-color:%s; box-shadow:none; }",
+        accent, accent, border);
     g_string_append_printf(css,
         ".wup-settings .wup-brand-title { font-size:12px; font-weight:bold; color:%s; }"
         ".wup-settings .wup-window-action { min-width:24px; min-height:22px; "
@@ -1319,12 +1336,16 @@ static const char *btn_icon_files[18] = {
 static char *wup_wiiu_svg_path(const char *file) {
     char *exe = g_file_read_link("/proc/self/exe", NULL);
     char *bindir = exe ? g_path_get_dirname(exe) : NULL;
+    /* WUP_V911_APPIMAGE_ASSETS: bundled Wii U control icons. */
+    char *bundled = bindir ? g_build_filename(bindir, "..", "share", "wupstreamd", "icons", "wiiu", file, NULL) : NULL;
+    const char *app_root = g_getenv("APPDIR");
+    char *app_icon = app_root ? g_build_filename(app_root, "usr", "share", "wupstreamd", "icons", "wiiu", file, NULL) : NULL;
     char *dev = bindir ? g_build_filename(bindir, "..", "data", "icons", "wiiu", file, NULL) : NULL;
     char *cwd = g_build_filename("data", "icons", "wiiu", file, NULL);
     char *user = g_build_filename(g_get_user_data_dir(), "wupstreamd", "icons", "wiiu", file, NULL);
     char *local = g_build_filename("/usr/local/share/wupstreamd/icons/wiiu", file, NULL);
     char *system = g_build_filename("/usr/share/wupstreamd/icons/wiiu", file, NULL);
-    const char *paths[] = {dev, cwd, user, local, system, NULL};
+    const char *paths[] = {dev, cwd, user, bundled, app_icon, local, system, NULL};
     char *found = NULL;
     for (guint i = 0; i < G_N_ELEMENTS(paths) - 1; i++) {
         if (paths[i] && g_file_test(paths[i], G_FILE_TEST_IS_REGULAR)) {
@@ -1332,7 +1353,7 @@ static char *wup_wiiu_svg_path(const char *file) {
             break;
         }
     }
-    g_free(dev); g_free(cwd); g_free(user); g_free(local); g_free(system);
+    g_free(dev); g_free(cwd); g_free(user); g_free(bundled); g_free(app_icon); g_free(local); g_free(system);
     g_free(bindir); g_free(exe);
     return found;
 }
@@ -1852,9 +1873,13 @@ static GdkPixbuf *load_icon(void) {
     char *bindir = exe ? g_path_get_dirname(exe) : NULL;
     char *local_png = bindir ? g_build_filename(bindir, "..", "data", "wupstreamd.png", NULL) : NULL;
     char *local_svg = bindir ? g_build_filename(bindir, "..", "data", "wupstreamd.svg", NULL) : NULL;
+    /* WUP_V911_APPIMAGE_ASSETS: also find the packaged tray/window icon. */
+    char *bundled_png = bindir ? g_build_filename(bindir, "..", "share", "icons", "hicolor", "256x256", "apps", "wupstreamd.png", NULL) : NULL;
+    const char *app_root = g_getenv("APPDIR");
+    char *app_png = app_root ? g_build_filename(app_root, "usr", "share", "icons", "hicolor", "256x256", "apps", "wupstreamd.png", NULL) : NULL;
     const char *paths[] = {
         getenv("WUPSTREAMD_ICON"),
-        local_png, local_svg,
+        local_png, local_svg, bundled_png, app_png,
         "data/wupstreamd.png", "data/wupstreamd.svg",
         "/usr/share/icons/hicolor/256x256/apps/wupstreamd.png",
         "/usr/local/share/icons/hicolor/256x256/apps/wupstreamd.png",
@@ -1873,6 +1898,8 @@ static GdkPixbuf *load_icon(void) {
     }
     g_free(local_png);
     g_free(local_svg);
+    g_free(bundled_png);
+    g_free(app_png);
     g_free(bindir);
     g_free(exe);
     return pb;

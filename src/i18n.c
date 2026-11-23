@@ -132,13 +132,20 @@ void wup_i18n_reload(wup_i18n_t *tr) {
     }
     char *exe=g_file_read_link("/proc/self/exe",NULL);
     char *bin=exe ? g_path_get_dirname(exe) : NULL;
+    /* WUP_V911_APPIMAGE_ASSETS: prefer embedded AppImage language JSONs when present.
+     * Keep custom per-user translations at the highest precedence. */
+    char *bundled=bin ? g_build_filename(bin,"..","share","wupstreamd","languages",NULL) : NULL;
+    const char *app_root=g_getenv("APPDIR");
+    char *app_data=app_root ? g_build_filename(app_root,"usr","share","wupstreamd","languages",NULL) : NULL;
     char *dev=bin ? g_build_filename(bin,"..","data","languages",NULL) : NULL;
+    scan_language_dir(tr,bundled);
+    scan_language_dir(tr,app_data);
     scan_language_dir(tr,dev);
     if (!dev || !g_file_test(dev,G_FILE_TEST_IS_DIR))
         scan_language_dir(tr,"data/languages");
     char *usr=g_build_filename(g_get_user_config_dir(),"wup-stream-serveur","languages",NULL);
     scan_language_dir(tr,usr);
-    g_free(usr);g_free(dev);g_free(bin);g_free(exe);
+    g_free(usr);g_free(dev);g_free(app_data);g_free(bundled);g_free(bin);g_free(exe);
     tr->current=find_language(tr,previous);
     if (!tr->current) tr->current=en;
     g_free(previous);
