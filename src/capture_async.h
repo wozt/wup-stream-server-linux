@@ -5,7 +5,7 @@
 typedef struct capture_async capture_async_t;
 typedef struct {
     double total_ms, x11_ms, scale_ms;
-    unsigned int frames, errors;
+    unsigned int frames, errors, dropped; /* WUP_V913: stale pending frames superseded */
 } capture_async_sample_t;
 
 /* Ownership: caller owns capture_t, worker is its exclusive user until free(). */

@@ -8,7 +8,8 @@ typedef struct server_t server_t;
  * includes libwupstream pacing; it is not end-to-end Wi-Fi latency. */
 typedef struct {
     double fps, fresh_fps, capture_ms, x11_ms, scale_ms, frame_call_ms;
-    unsigned int capture_errors;
+    double captured_fps; /* WUP_V913: actual worker throughput */
+    unsigned int capture_errors, repeated, dropped;
     int valid;
 } server_metrics_t;
 

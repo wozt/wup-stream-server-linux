@@ -77,12 +77,8 @@ static void apply_quality_env(const settings_t *s) {
     char x264[160] = "";
     if (s->low_latency)
         snprintf(x264, sizeof x264, "bframes=0:rc-lookahead=0:sync-lookahead=0:sliced-threads=1");
-    if (s->gop > 0) {
-        char k[32];
-        snprintf(k, sizeof k, "keyint=%d", s->gop);
-        if (x264[0]) strncat(x264, ":", sizeof(x264) - strlen(x264) - 1);
-        strncat(x264, k, sizeof(x264) - strlen(x264) - 1);
-    }
+    /* WUP_V913_GOP_ZERO: no explicit keyint override.
+     * The pad requests IDRs itself; forcing periodic GOP corrupts video. */
     if (x264[0]) setenv("WUPSTREAM_X264", x264, 1);
     else unsetenv("WUPSTREAM_X264");
 }
@@ -239,6 +235,7 @@ static void *server_thread(void *arg) {
         int lost = 0;
         double sample_since = v98_clock();
         unsigned int sample_frames = 0, sample_fresh = 0, sample_capture_count = 0;
+        unsigned int sample_dropped = 0; /* WUP_V913_DROP_METRICS */
         double sample_capture_ms = 0.0, sample_frame_ms = 0.0;
         double sample_x11_ms = 0.0, sample_scale_ms = 0.0;
         unsigned int capture_errors = 0;
@@ -316,6 +313,7 @@ static void *server_thread(void *arg) {
                     capture_async_sample_t taken;
                     capture_async_sample(cap_async, &taken);
                     capture_errors += taken.errors;
+                    sample_dropped += taken.dropped;
                     sample_capture_count += taken.frames;
                     sample_capture_ms += taken.total_ms;
                     sample_x11_ms += taken.x11_ms;
@@ -424,10 +422,15 @@ static void *server_thread(void *arg) {
                     sample_x11_ms += taken.x11_ms;
                     sample_scale_ms += taken.scale_ms;
                     capture_errors += taken.errors;
+                    sample_dropped += taken.dropped;
                 }
                 server_metrics_t m = {
                     .fps = sample_frames / elapsed,
                     .fresh_fps = (!cap_ok ? sample_frames : sample_fresh / elapsed),
+                    .captured_fps = sample_capture_count / elapsed, /* WUP_V913 */
+                    .repeated = sample_frames > sample_fresh && cap_ok
+                        ? sample_frames - sample_fresh : 0,
+                    .dropped = sample_dropped,
                     .capture_ms = sample_capture_count ? sample_capture_ms / sample_capture_count : 0.0,
                     .x11_ms = sample_capture_count ? sample_x11_ms / sample_capture_count : 0.0,
                     .scale_ms = sample_capture_count ? sample_scale_ms / sample_capture_count : 0.0,
@@ -438,7 +441,7 @@ static void *server_thread(void *arg) {
                 pthread_mutex_lock(&srv->mtx);
                 srv->metrics = m;
                 pthread_mutex_unlock(&srv->mtx);
-                sample_frames = sample_fresh = sample_capture_count = 0;
+                sample_frames = sample_fresh = sample_capture_count = sample_dropped = 0;
                 sample_capture_ms = sample_x11_ms = sample_scale_ms = sample_frame_ms = 0.0;
                 sample_since = frame_end;
             }

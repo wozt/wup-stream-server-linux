@@ -5,6 +5,8 @@
 
 #define CFG_DIR ".config/wup-stream-serveur"
 #define CFG_FILE "settings.json"
+/* WUP_V913_GOP_ZERO: legacy JSON GOP entries are ignored and removed
+ * on save. Keep the struct field for ABI/source compatibility. */
 
 const char *settings_path(void) {
     static char path[512];
@@ -32,6 +34,7 @@ void settings_defaults(settings_t *s) {
     s->aspect = ASPECT_LETTERBOX;
     s->crf = 18;
     s->kbps = 10000;
+    s->gop = 0;
     s->audio_pc_to_pad = 1;
     s->audio_pad_to_pc = 0;
     s->pad_volume_controls_pc = 1; /* Preserve previous default behavior */
@@ -56,9 +59,9 @@ void settings_defaults(settings_t *s) {
     }
     s->npresets = 3;
     struct { const char *n; int crf, kbps, gop; } dp[] = {
-        {"Economy", 23, 4000, 120},
-        {"Balanced", 18, 10000, 60},
-        {"Max", 14, 20000, 30},
+        {"Economy", 23, 4000, 0},
+        {"Balanced", 18, 10000, 0},
+        {"Max", 14, 20000, 0},
     };
     for (int i = 0; i < 3; i++) {
         snprintf(s->presets[i].name, 64, "%s", dp[i].n);
@@ -107,7 +110,7 @@ settings_t *settings_load(void) {
     s->low_latency = json_int(root, "low_latency", 1);
     s->crf = json_int(root, "crf", s->crf);
     s->kbps = json_int(root, "kbps", s->kbps);
-    s->gop = json_int(root, "gop", s->gop);
+    s->gop = 0; /* Ignore old saved values. */
     s->audio_pc_to_pad = json_int(root, "audio_pc_to_pad", s->audio_pc_to_pad);
     s->audio_pad_to_pc = json_int(root, "audio_pad_to_pc", s->audio_pad_to_pc);
     s->pad_volume_controls_pc = json_int(root, "pad_volume_controls_pc", s->pad_volume_controls_pc);
@@ -201,7 +204,7 @@ settings_t *settings_load(void) {
                      json_object_get_string_member_with_default(po, "name", ""));
             s->presets[i].crf = json_int(po, "crf", 18);
             s->presets[i].kbps = json_int(po, "kbps", 10000);
-            s->presets[i].gop = json_int(po, "gop", 60);
+            s->presets[i].gop = 0; /* Ignore old preset values. */
         }
         s->npresets = n;
     }
@@ -219,7 +222,6 @@ void settings_save(settings_t *s) {
     json_object_set_int_member(root, "low_latency", s->low_latency);
     json_object_set_int_member(root, "crf", s->crf);
     json_object_set_int_member(root, "kbps", s->kbps);
-    json_object_set_int_member(root, "gop", s->gop);
     json_object_set_int_member(root, "audio_pc_to_pad", s->audio_pc_to_pad);
     json_object_set_int_member(root, "audio_pad_to_pc", s->audio_pad_to_pc);
     json_object_set_int_member(root, "pad_volume_controls_pc", s->pad_volume_controls_pc);
@@ -285,7 +287,6 @@ void settings_save(settings_t *s) {
         json_object_set_string_member(po, "name", s->presets[i].name);
         json_object_set_int_member(po, "crf", s->presets[i].crf);
         json_object_set_int_member(po, "kbps", s->presets[i].kbps);
-        json_object_set_int_member(po, "gop", s->presets[i].gop);
         json_array_add_object_element(pres, po);
     }
     json_object_set_array_member(root, "presets", pres);

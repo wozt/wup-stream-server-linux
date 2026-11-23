@@ -29,7 +29,7 @@ struct ui_t {
     GtkWidget *region_button, *window_pick_button;
     gboolean region_picking, window_picking;
     /* quality */
-    GtkWidget *preset_combo, *crf_spin, *kbps_spin, *gop_spin, *lowlat_chk;
+    GtkWidget *preset_combo, *crf_spin, *kbps_spin, *lowlat_chk; /* WUP_V913_GOP_HIDDEN */
     GtkWidget *src_frame, *qual_frame;
     /* input */
     GtkWidget *mode_combo, *dz_spin, *sens_spin, *invert_chk;
@@ -950,10 +950,9 @@ static void on_preset_changed(GtkComboBox *cb, ui_t *u) {
         if (!strcmp(u->s->presets[i].name, name)) {
             u->s->crf = u->s->presets[i].crf;
             u->s->kbps = u->s->presets[i].kbps;
-            u->s->gop = u->s->presets[i].gop;
+            u->s->gop = 0; /* GamePad decoder: no periodic GOP */
             gtk_spin_button_set_value(GTK_SPIN_BUTTON(u->crf_spin), u->s->crf);
             gtk_spin_button_set_value(GTK_SPIN_BUTTON(u->kbps_spin), u->s->kbps);
-            gtk_spin_button_set_value(GTK_SPIN_BUTTON(u->gop_spin), u->s->gop);
             break;
         }
     g_free(name);
@@ -964,7 +963,7 @@ static void on_quality_spin(GtkSpinButton *sp, ui_t *u) {
     (void)sp;
     u->s->crf = gtk_spin_button_get_value_as_int(GTK_SPIN_BUTTON(u->crf_spin));
     u->s->kbps = gtk_spin_button_get_value_as_int(GTK_SPIN_BUTTON(u->kbps_spin));
-    u->s->gop = gtk_spin_button_get_value_as_int(GTK_SPIN_BUTTON(u->gop_spin));
+    u->s->gop = 0;
     u->s->custom_quality = 1;
     commit_reconnect(u);
 }
@@ -981,7 +980,7 @@ static void on_save_preset(GtkButton *b, ui_t *u) {
     snprintf(p->name, sizeof p->name, "Custom %d", u->s->npresets);
     p->crf = gtk_spin_button_get_value_as_int(GTK_SPIN_BUTTON(u->crf_spin));
     p->kbps = gtk_spin_button_get_value_as_int(GTK_SPIN_BUTTON(u->kbps_spin));
-    p->gop = gtk_spin_button_get_value_as_int(GTK_SPIN_BUTTON(u->gop_spin));
+    p->gop = 0;
     refresh_presets(u);
     commit_live(u);
 }
@@ -1012,11 +1011,7 @@ static GtkWidget *build_quality_section(ui_t *u) {
     gtk_grid_attach(GTK_GRID(grid), mk_label("Bitrate:"), 0, 1, 1, 1);
     gtk_grid_attach(GTK_GRID(grid), u->kbps_spin, 1, 1, 1, 1);
 
-    u->gop_spin = mk_spin(0, 600, u->s->gop);
-    gtk_widget_set_tooltip_text(u->gop_spin, "Keyframe interval; 0 = automatic");
-    g_signal_connect(u->gop_spin, "value-changed", G_CALLBACK(on_quality_spin), u);
-    gtk_grid_attach(GTK_GRID(grid), mk_label("GOP:"), 2, 1, 1, 1);
-    gtk_grid_attach(GTK_GRID(grid), u->gop_spin, 3, 1, 1, 1);
+    /* GOP intentionally hidden: GamePad requires automatic IDRs (0). */
 
     GtkWidget *line = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
     gtk_box_pack_start(GTK_BOX(sec), line, FALSE, FALSE, 0);
@@ -1798,10 +1793,12 @@ static GtkWidget *build_conn_section(ui_t *u) {
      * are performed by the frame pipeline for UI updates. */
     u->stats_lbl = gtk_label_new("FPS --  |  Cap -- ms  |  Frame -- ms");
     gtk_label_set_xalign(GTK_LABEL(u->stats_lbl), 0);
-    gtk_label_set_max_width_chars(GTK_LABEL(u->stats_lbl), 57);
+    gtk_label_set_max_width_chars(GTK_LABEL(u->stats_lbl), 65);
     gtk_label_set_ellipsize(GTK_LABEL(u->stats_lbl), PANGO_ELLIPSIZE_END);
     gtk_widget_set_tooltip_text(u->stats_lbl,
-        "FPS = encoder calls/s; new = distinct capture frames/s. X11 and Scale split the capture cost. Frame includes pacing, not end-to-end latency.");
+        "WUP_V913: Capt is the produced capture rate, New is accepted unique frames, "
+        "Repeat reuses an image, Drop supersedes an unconsumed one. "
+        "Frame includes libwupstream pacing, not end-to-end latency.");
     gtk_box_pack_start(GTK_BOX(sec), u->stats_lbl, FALSE, FALSE, 0);
     return frame_of(sec);
 }
@@ -2121,10 +2118,12 @@ void ui_refresh_status(ui_t *u) {
         char metrics_text[180];
         if (m.valid && st == SRV_STREAMING)
             snprintf(metrics_text, sizeof metrics_text,
-                "FPS %.1f / new %.1f | Cap %.1fms | Err %u\n"
-                "X11 %.1fms | Scale %.1fms | Frame %.1fms",
-                m.fps, m.fresh_fps, m.capture_ms, m.capture_errors,
-                m.x11_ms, m.scale_ms, m.frame_call_ms);
+                "FPS %.1f | New %.1f | Capt %.1f\n"
+                "Repeat %u | Drop %u | Err %u\n"
+                "Cap %.1fms | X11 %.1fms | Scale %.1fms | Frame %.1fms",
+                m.fps, m.fresh_fps, m.captured_fps,
+                m.repeated, m.dropped, m.capture_errors,
+                m.capture_ms, m.x11_ms, m.scale_ms, m.frame_call_ms);
         else
             snprintf(metrics_text, sizeof metrics_text,
                      "FPS --  |  Cap -- ms  |  Frame -- ms");
