@@ -2186,7 +2186,10 @@ ui_t *ui_new(settings_t *s, server_t *srv) {
     u->window = gtk_window_new(GTK_WINDOW_TOPLEVEL);
     /* Must be set before the window is realized: X11 WM_CLASS matches
      * StartupWMClass=wupstreamd in data/wupstreamd.desktop. */
+    /* GTK3/X11: keep explicit WM_CLASS for correct taskbar icon matching. */
+    G_GNUC_BEGIN_IGNORE_DEPRECATIONS
     gtk_window_set_wmclass(GTK_WINDOW(u->window), "wupstreamd", "wupstreamd");
+    G_GNUC_END_IGNORE_DEPRECATIONS
     gtk_window_set_decorated(GTK_WINDOW(u->window), FALSE);
     gtk_window_set_resizable(GTK_WINDOW(u->window),TRUE);
     gtk_style_context_add_class(gtk_widget_get_style_context(u->window),
