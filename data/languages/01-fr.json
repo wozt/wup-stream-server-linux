@@ -111,6 +111,24 @@
     "Start stream to read sensors": "Lancer le flux pour les capteurs",
     "WUP / LIVE INPUT": "WUP / ENTRÉES",
     "ACCEL (g)": "ACCÉL. (g)",
-    "Key mapping help body": "Raccourcis clavier : une lettre (a), les touches de fonction (F1…F12), flèches, Entrée, Échap et Espace. Raccourcis combinés : Ctrl+A, Alt+Ctrl+G, Maj+F5, Super+Entrée. Laissez un champ vide pour désactiver son association. Les profils sauvegardent les boutons et directions de sticks par application."
+    "Key mapping help body": "Raccourcis clavier : une lettre (a), les touches de fonction (F1…F12), flèches, Entrée, Échap et Espace. Raccourcis combinés : Ctrl+A, Alt+Ctrl+G, Maj+F5, Super+Entrée. Laissez un champ vide pour désactiver son association. Les profils sauvegardent les boutons et directions de sticks par application.",
+    "Supported keys": "Touches disponibles",
+    "Key combinations": "Combinaisons de touches",
+    "Mappings and presets": "Associations et profils",
+    "Letters (case-insensitive)": "Lettres (sans distinction majuscule/minuscule)",
+    "Function keys": "Touches de fonction",
+    "Arrow keys": "Touches fléchées",
+    "Common command keys": "Touches de commande courantes",
+    "Editing keys": "Touches de modification",
+    "Page navigation keys": "Navigation dans les pages",
+    "Punctuation and symbols": "Ponctuation et symboles",
+    "Hold Ctrl while pressing A.": "Maintenir Ctrl en appuyant sur A.",
+    "Hold Alt and Ctrl while pressing G.": "Maintenir Alt et Ctrl en appuyant sur G.",
+    "Hold Shift while pressing F5.": "Maintenir Maj en appuyant sur F5.",
+    "Hold Super (Windows key) while pressing Return.": "Maintenir Super (touche Windows) en appuyant sur Entrée.",
+    "Accepted: Ctrl/Control, Alt, Shift, Super/Win/Meta.": "Modificateurs : Ctrl/Control, Alt, Shift, Super/Win/Meta.",
+    "Empty field means unassigned.": "Champ vide : commande non associée.",
+    "Save button and stick direction mappings per application.": "Enregistrer les boutons et directions des sticks dans un profil par application.",
+    "Stored in settings.json.": "Profils enregistrés dans settings.json."
   }
 }

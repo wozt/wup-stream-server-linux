@@ -111,6 +111,24 @@
     "Start stream to read sensors": "Stream für Sensoren starten",
     "WUP / LIVE INPUT": "WUP / LIVE-EINGABE",
     "ACCEL (g)": "BESCHL. (g)",
-    "Key mapping help body": "Tastenbelegung: Buchstaben (a), Funktionstasten (F1…F12), Pfeile, Enter, Escape und Leertaste. Kombinationen: Ctrl+A, Alt+Ctrl+G, Shift+F5, Super+Return. Leeres Feld bedeutet keine Belegung. Profile speichern Tasten und Stickrichtungen pro Anwendung."
+    "Key mapping help body": "Tastenbelegung: Buchstaben (a), Funktionstasten (F1…F12), Pfeile, Enter, Escape und Leertaste. Kombinationen: Ctrl+A, Alt+Ctrl+G, Shift+F5, Super+Return. Leeres Feld bedeutet keine Belegung. Profile speichern Tasten und Stickrichtungen pro Anwendung.",
+    "Supported keys": "Verfügbare Tasten",
+    "Key combinations": "Tastenkombinationen",
+    "Mappings and presets": "Belegungen und Profile",
+    "Letters (case-insensitive)": "Buchstaben (Groß-/Kleinschreibung egal)",
+    "Function keys": "Funktionstasten",
+    "Arrow keys": "Pfeiltasten",
+    "Common command keys": "Häufige Befehlstasten",
+    "Editing keys": "Bearbeitungstasten",
+    "Page navigation keys": "Seitennavigation",
+    "Punctuation and symbols": "Satzzeichen und Symbole",
+    "Hold Ctrl while pressing A.": "Strg gedrückt halten und A drücken.",
+    "Hold Alt and Ctrl while pressing G.": "Alt und Strg gedrückt halten und G drücken.",
+    "Hold Shift while pressing F5.": "Umschalt gedrückt halten und F5 drücken.",
+    "Hold Super (Windows key) while pressing Return.": "Super (Windows-Taste) gedrückt halten und Return drücken.",
+    "Accepted: Ctrl/Control, Alt, Shift, Super/Win/Meta.": "Erlaubt: Ctrl/Control, Alt, Shift, Super/Win/Meta.",
+    "Empty field means unassigned.": "Leeres Feld bedeutet: nicht belegt.",
+    "Save button and stick direction mappings per application.": "Tasten und Stickrichtungen pro Anwendung als Profil speichern.",
+    "Stored in settings.json.": "Profile werden in settings.json gespeichert."
   }
 }

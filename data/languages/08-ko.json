@@ -111,6 +111,24 @@
     "Start stream to read sensors": "스트리밍 시작하여 센서 확인",
     "WUP / LIVE INPUT": "WUP / 입력",
     "ACCEL (g)": "가속도 (g)",
-    "Key mapping help body": "키 매핑: 문자(a), F1~F12, 방향키, Enter, Escape, Space를 사용할 수 있습니다. 조합: Ctrl+A, Alt+Ctrl+G, Shift+F5, Super+Return. 빈 칸은 매핑하지 않습니다. 프리셋은 앱별 버튼과 스틱 방향을 저장합니다."
+    "Key mapping help body": "키 매핑: 문자(a), F1~F12, 방향키, Enter, Escape, Space를 사용할 수 있습니다. 조합: Ctrl+A, Alt+Ctrl+G, Shift+F5, Super+Return. 빈 칸은 매핑하지 않습니다. 프리셋은 앱별 버튼과 스틱 방향을 저장합니다.",
+    "Supported keys": "사용 가능한 키",
+    "Key combinations": "키 조합",
+    "Mappings and presets": "키 할당 및 프리셋",
+    "Letters (case-insensitive)": "영문자 (대소문자 구분 없음)",
+    "Function keys": "기능 키",
+    "Arrow keys": "방향키",
+    "Common command keys": "일반 명령 키",
+    "Editing keys": "편집 키",
+    "Page navigation keys": "페이지 이동 키",
+    "Punctuation and symbols": "구두점 및 기호",
+    "Hold Ctrl while pressing A.": "Ctrl을 누른 상태에서 A를 누릅니다.",
+    "Hold Alt and Ctrl while pressing G.": "Alt와 Ctrl을 누른 상태에서 G를 누릅니다.",
+    "Hold Shift while pressing F5.": "Shift를 누른 상태에서 F5를 누릅니다.",
+    "Hold Super (Windows key) while pressing Return.": "Super(Windows 키)를 누른 상태에서 Return을 누릅니다.",
+    "Accepted: Ctrl/Control, Alt, Shift, Super/Win/Meta.": "사용 가능한 조합 키: Ctrl/Control, Alt, Shift, Super/Win/Meta.",
+    "Empty field means unassigned.": "빈 칸은 해당 입력을 할당하지 않습니다.",
+    "Save button and stick direction mappings per application.": "버튼 및 스틱 방향을 앱별 프리셋으로 저장합니다.",
+    "Stored in settings.json.": "프리셋은 settings.json에 저장됩니다."
   }
 }

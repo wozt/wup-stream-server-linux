@@ -283,6 +283,11 @@ static void wup_apply_theme(ui_t *u) {
         ".wup-settings .wup-help textview text { background-color:%s; color:%s; }"
         ".wup-settings .wup-help scrolledwindow { border:1px solid %s; border-radius:6px; }",
         entry,fg,border);
+    /* WUP_V9_STICK_HELP: themed, structured multilingual help. */
+    g_string_append_printf(css,
+        ".wup-settings .wup-help-heading { color:%s; font-weight:bold; font-size:12px; }"
+        ".wup-settings .wup-help-key { color:%s; font-weight:bold; font-family:monospace; }",
+        accent,fg);
     GError *err=NULL;
     gtk_css_provider_load_from_data(u->theme_css,css->str,-1,&err);
     if (err) {g_warning("Theme CSS: %s",err->message);g_clear_error(&err);}
@@ -957,39 +962,56 @@ static gboolean wup_help_key(GtkWidget *widget, GdkEventKey *event,
     return FALSE;
 }
 
+/* WUP_V9_STICK_HELP: structured, fully localized help.
+ * The code/syntax column is deliberately not translated: these are the exact
+ * X11 keysym tokens accepted by the mapper. Descriptions use JSON languages. */
+static GtkWidget *wup_help_group(GtkWidget *parent, const char *heading) {
+    GtkWidget *title = gtk_label_new(heading);
+    gtk_label_set_xalign(GTK_LABEL(title), 0);
+    gtk_widget_set_margin_top(title, 7);
+    gtk_widget_set_margin_bottom(title, 3);
+    gtk_style_context_add_class(gtk_widget_get_style_context(title),
+                                "wup-help-heading");
+    gtk_box_pack_start(GTK_BOX(parent), title, FALSE, FALSE, 0);
+    GtkWidget *grid = gtk_grid_new();
+    gtk_grid_set_row_spacing(GTK_GRID(grid), 5);
+    gtk_grid_set_column_spacing(GTK_GRID(grid), 12);
+    gtk_box_pack_start(GTK_BOX(parent), grid, FALSE, FALSE, 0);
+    return grid;
+}
+
+static void wup_help_item(GtkWidget *grid, int row, const char *keys,
+                          const char *description) {
+    GtkWidget *syntax = gtk_label_new(keys);
+    gtk_label_set_xalign(GTK_LABEL(syntax), 0);
+    gtk_label_set_line_wrap(GTK_LABEL(syntax), TRUE);
+    gtk_label_set_selectable(GTK_LABEL(syntax), TRUE);
+    gtk_widget_set_halign(syntax, GTK_ALIGN_START);
+    gtk_widget_set_valign(syntax, GTK_ALIGN_START);
+    gtk_widget_set_size_request(syntax, 206, -1);
+    gtk_style_context_add_class(gtk_widget_get_style_context(syntax),
+                                "wup-help-key");
+    gtk_grid_attach(GTK_GRID(grid), syntax, 0, row, 1, 1);
+
+    GtkWidget *detail = gtk_label_new(description);
+    gtk_label_set_xalign(GTK_LABEL(detail), 0);
+    gtk_label_set_line_wrap(GTK_LABEL(detail), TRUE);
+    gtk_label_set_line_wrap_mode(GTK_LABEL(detail), PANGO_WRAP_WORD_CHAR);
+    gtk_label_set_selectable(GTK_LABEL(detail), TRUE);
+    gtk_widget_set_hexpand(detail, TRUE);
+    gtk_widget_set_valign(detail, GTK_ALIGN_START);
+    gtk_grid_attach(GTK_GRID(grid), detail, 1, row, 1, 1);
+}
+
 static void on_key_help(GtkButton *b, ui_t *u) {
     (void)b;
-    const char *txt =
-        "Key syntax for button/stick mappings:\n"
-        "\n"
-        "  a            single letter (case-insensitive)\n"
-        "  F1..F12      function keys\n"
-        "  Left Right Up Down   arrow keys\n"
-        "  Return Escape space Tab BackSpace Delete Insert\n"
-        "  Home End Page_Up Page_Down\n"
-        "  minus plus equal comma period slash backslash\n"
-        "  semicolon apostrophe bracketleft bracketright grave\n"
-        "\n"
-        "  Chords: modifiers + key, e.g.\n"
-        "    Ctrl+A          Control + A\n"
-        "    Alt+Ctrl+G      Alt + Control + G\n"
-        "    Shift+F5       Shift + F5\n"
-        "    Super+Return   Super/Win + Enter\n"
-        "\n"
-        "  Modifiers: Ctrl/Control, Alt, Shift, Super/Win/Meta\n"
-        "  (also Control_L, Alt_L, Shift_L, Super_L accepted)\n"
-        "  Empty field = unmapped.\n"
-        "\n"
-        "  Command presets save whole keymaps (buttons + stick dirs)\n"
-        "  as JSON in settings.json - one per app if you like.";
-
     GtkWidget *dlg = gtk_dialog_new_with_buttons(
         wup_i18n_lookup(u->i18n, "Key mapping help"),
         GTK_WINDOW(u->window), GTK_DIALOG_MODAL, NULL);
     gtk_window_set_decorated(GTK_WINDOW(dlg), FALSE);
     gtk_window_set_resizable(GTK_WINDOW(dlg), FALSE);
     gtk_window_set_position(GTK_WINDOW(dlg), GTK_WIN_POS_CENTER_ON_PARENT);
-    gtk_window_set_default_size(GTK_WINDOW(dlg), 465, 420);
+    gtk_window_set_default_size(GTK_WINDOW(dlg), 540, 475);
     gtk_style_context_add_class(gtk_widget_get_style_context(dlg), "wup-settings");
     GtkWidget *content = gtk_dialog_get_content_area(GTK_DIALOG(dlg));
     gtk_style_context_add_class(gtk_widget_get_style_context(content), "wup-help");
@@ -1025,23 +1047,35 @@ static void on_key_help(GtkButton *b, ui_t *u) {
     GtkWidget *sw = gtk_scrolled_window_new(NULL, NULL);
     gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(sw),
                                    GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC);
-    gtk_widget_set_size_request(sw, 440, 350);
+    gtk_widget_set_size_request(sw, 505, 398);
     gtk_widget_set_vexpand(sw, TRUE);
-    GtkWidget *tv = gtk_text_view_new();
-    gtk_text_view_set_editable(GTK_TEXT_VIEW(tv), FALSE);
-    gtk_text_view_set_cursor_visible(GTK_TEXT_VIEW(tv), FALSE);
-    gtk_text_view_set_monospace(GTK_TEXT_VIEW(tv), TRUE);
-    gtk_text_view_set_wrap_mode(GTK_TEXT_VIEW(tv), GTK_WRAP_WORD_CHAR);
-    gtk_text_view_set_left_margin(GTK_TEXT_VIEW(tv), 10);
-    gtk_text_view_set_right_margin(GTK_TEXT_VIEW(tv), 10);
-    gtk_text_view_set_top_margin(GTK_TEXT_VIEW(tv), 10);
-    const char *help = wup_i18n_lookup(u->i18n, "Key mapping help body");
-    gtk_text_buffer_set_text(gtk_text_view_get_buffer(GTK_TEXT_VIEW(tv)),
-        !strcmp(help, "Key mapping help body") ? txt : help, -1);
-    gtk_container_add(GTK_CONTAINER(sw), tv);
+    GtkWidget *sections = gtk_box_new(GTK_ORIENTATION_VERTICAL, 2);
+    gtk_container_set_border_width(GTK_CONTAINER(sections), 10);
+    gtk_container_add(GTK_CONTAINER(sw), sections);
     gtk_box_pack_start(GTK_BOX(content), sw, TRUE, TRUE, 0);
 
-    /* Do not show GTK's otherwise-empty native dialog footer. */
+    GtkWidget *keys = wup_help_group(sections, wup_i18n_lookup(u->i18n, "Supported keys"));
+    wup_help_item(keys, 0, "a ... z", wup_i18n_lookup(u->i18n, "Letters (case-insensitive)"));
+    wup_help_item(keys, 1, "F1 ... F12", wup_i18n_lookup(u->i18n, "Function keys"));
+    wup_help_item(keys, 2, "Left / Right / Up / Down", wup_i18n_lookup(u->i18n, "Arrow keys"));
+    wup_help_item(keys, 3, "Return / Escape / space / Tab", wup_i18n_lookup(u->i18n, "Common command keys"));
+    wup_help_item(keys, 4, "BackSpace / Delete / Insert", wup_i18n_lookup(u->i18n, "Editing keys"));
+    wup_help_item(keys, 5, "Home / End / Page_Up / Page_Down", wup_i18n_lookup(u->i18n, "Page navigation keys"));
+    wup_help_item(keys, 6, "minus / plus / slash / comma ...", wup_i18n_lookup(u->i18n, "Punctuation and symbols"));
+
+    GtkWidget *combos = wup_help_group(sections, wup_i18n_lookup(u->i18n, "Key combinations"));
+    wup_help_item(combos, 0, "Ctrl+A", wup_i18n_lookup(u->i18n, "Hold Ctrl while pressing A."));
+    wup_help_item(combos, 1, "Alt+Ctrl+G", wup_i18n_lookup(u->i18n, "Hold Alt and Ctrl while pressing G."));
+    wup_help_item(combos, 2, "Shift+F5", wup_i18n_lookup(u->i18n, "Hold Shift while pressing F5."));
+    wup_help_item(combos, 3, "Super+Return", wup_i18n_lookup(u->i18n, "Hold Super (Windows key) while pressing Return."));
+    wup_help_item(combos, 4, "Ctrl · Alt · Shift · Super", wup_i18n_lookup(u->i18n, "Accepted: Ctrl/Control, Alt, Shift, Super/Win/Meta."));
+
+    GtkWidget *presets = wup_help_group(sections, wup_i18n_lookup(u->i18n, "Mappings and presets"));
+    wup_help_item(presets, 0, "—", wup_i18n_lookup(u->i18n, "Empty field means unassigned."));
+    wup_help_item(presets, 1, "Preset", wup_i18n_lookup(u->i18n, "Save button and stick direction mappings per application."));
+    wup_help_item(presets, 2, "settings.json", wup_i18n_lookup(u->i18n, "Stored in settings.json."));
+
+    /* Hide GTK's empty native dialog action area; the titlebar owns Close. */
     GtkWidget *actions = gtk_dialog_get_action_area(GTK_DIALOG(dlg));
     gtk_widget_set_no_show_all(actions, TRUE);
     gtk_widget_hide(actions);
@@ -1106,6 +1140,34 @@ static GtkWidget *btn_icon_widget(int idx) {
 static const char *stick_dir_names[8] = {
     "L\u2190", "L\u2192", "L\u2191", "L\u2193", "R\u2190", "R\u2192", "R\u2191", "R\u2193"
 };
+
+/* WUP_V9_STICK_HELP: eight Wii U stick direction SVGs, one per mapping.
+ * Use the existing V8 vector-asset lookup and a readable text fallback. */
+static GtkWidget *wup_stick_icon_widget(int index) {
+    static const char *files[8] = {
+        "stick_l_left.svg", "stick_l_right.svg",
+        "stick_l_up.svg", "stick_l_down.svg",
+        "stick_r_left.svg", "stick_r_right.svg",
+        "stick_r_up.svg", "stick_r_down.svg"
+    };
+    if (index < 0 || index >= 8) return gtk_label_new("?");
+    char *path = wup_wiiu_svg_path(files[index]);
+    GdkPixbuf *pixbuf = path ?
+        gdk_pixbuf_new_from_file_at_scale(path, 31, 22, TRUE, NULL) : NULL;
+    g_free(path);
+    GtkWidget *image = pixbuf ? gtk_image_new_from_pixbuf(pixbuf)
+                              : gtk_label_new(stick_dir_names[index]);
+    if (pixbuf) g_object_unref(pixbuf);
+    GtkWidget *cell = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
+    gtk_widget_set_size_request(cell, 34, 23);
+    gtk_widget_set_halign(cell, GTK_ALIGN_CENTER);
+    gtk_widget_set_valign(cell, GTK_ALIGN_CENTER);
+    gtk_box_pack_start(GTK_BOX(cell), image, TRUE, TRUE, 0);
+    gtk_widget_set_tooltip_text(cell, stick_dir_names[index]);
+    return cell;
+}
+
+
 
 static void on_stick_key_edited(GtkEntry *e, ui_t *u) {
     for (int i = 0; i < 8; i++)
@@ -1234,7 +1296,7 @@ static GtkWidget *build_input_section(ui_t *u) {
             gtk_grid_attach(GTK_GRID(kgrid), entry, column + 1, row, 1, 1);
         }
         for (int i = 0; i < 8; i++) {
-            GtkWidget *direction = gtk_label_new(stick_dir_names[i]);
+            GtkWidget *direction = wup_stick_icon_widget(i);
             gtk_widget_set_halign(direction, GTK_ALIGN_CENTER);
             gtk_grid_attach(GTK_GRID(kgrid), direction, 4, i + 1, 1, 1);
             GtkWidget *entry = gtk_entry_new();
@@ -1801,7 +1863,7 @@ ui_t *ui_new(settings_t *s, server_t *srv) {
             g_object_unref(ic);
         }
     }
-    gtk_window_set_default_size(GTK_WINDOW(u->window), 960, 682);
+    gtk_window_set_default_size(GTK_WINDOW(u->window), 960, 698);
     g_signal_connect(u->window, "delete-event", G_CALLBACK(gtk_widget_hide_on_delete), NULL);
     gtk_widget_set_size_request(u->window, 680, 530);
 

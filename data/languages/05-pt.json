@@ -111,6 +111,24 @@
     "Start stream to read sensors": "Iniciar para ler sensores",
     "WUP / LIVE INPUT": "WUP / ENTRADA",
     "ACCEL (g)": "ACEL. (g)",
-    "Key mapping help body": "Mapeamento: letras (a), teclas de função (F1…F12), setas, Enter, Escape e Espaço. Combinações: Ctrl+A, Alt+Ctrl+G, Shift+F5, Super+Return. Deixe vazio para desativar uma associação. As predefinições guardam botões e direções dos manípulos por aplicação."
+    "Key mapping help body": "Mapeamento: letras (a), teclas de função (F1…F12), setas, Enter, Escape e Espaço. Combinações: Ctrl+A, Alt+Ctrl+G, Shift+F5, Super+Return. Deixe vazio para desativar uma associação. As predefinições guardam botões e direções dos manípulos por aplicação.",
+    "Supported keys": "Teclas disponíveis",
+    "Key combinations": "Combinações de teclas",
+    "Mappings and presets": "Mapeamentos e perfis",
+    "Letters (case-insensitive)": "Letras (sem diferenciar maiúsculas)",
+    "Function keys": "Teclas de função",
+    "Arrow keys": "Teclas de direção",
+    "Common command keys": "Teclas de comando comuns",
+    "Editing keys": "Teclas de edição",
+    "Page navigation keys": "Navegação de páginas",
+    "Punctuation and symbols": "Pontuação e símbolos",
+    "Hold Ctrl while pressing A.": "Mantém Ctrl premido e pressiona A.",
+    "Hold Alt and Ctrl while pressing G.": "Mantém Alt e Ctrl premidos e pressiona G.",
+    "Hold Shift while pressing F5.": "Mantém Shift premido e pressiona F5.",
+    "Hold Super (Windows key) while pressing Return.": "Mantém Super (tecla Windows) premido e pressiona Enter.",
+    "Accepted: Ctrl/Control, Alt, Shift, Super/Win/Meta.": "Modificadores aceites: Ctrl/Control, Alt, Shift, Super/Win/Meta.",
+    "Empty field means unassigned.": "Campo vazio: comando não atribuído.",
+    "Save button and stick direction mappings per application.": "Guarda botões e direções dos analógicos em perfis por aplicação.",
+    "Stored in settings.json.": "Os perfis são guardados em settings.json."
   }
 }

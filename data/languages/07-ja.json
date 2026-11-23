@@ -111,6 +111,24 @@
     "Start stream to read sensors": "配信開始でセンサー表示",
     "WUP / LIVE INPUT": "WUP / 入力",
     "ACCEL (g)": "加速度 (g)",
-    "Key mapping help body": "キー割り当て：文字 (a)、F1～F12、矢印キー、Enter、Escape、Space に対応。組み合わせ例：Ctrl+A、Alt+Ctrl+G、Shift+F5、Super+Return。空欄は割り当てなし。プリセットはアプリごとにボタンとスティック方向を保存します。"
+    "Key mapping help body": "キー割り当て：文字 (a)、F1～F12、矢印キー、Enter、Escape、Space に対応。組み合わせ例：Ctrl+A、Alt+Ctrl+G、Shift+F5、Super+Return。空欄は割り当てなし。プリセットはアプリごとにボタンとスティック方向を保存します。",
+    "Supported keys": "使用できるキー",
+    "Key combinations": "キーの組み合わせ",
+    "Mappings and presets": "割り当てとプリセット",
+    "Letters (case-insensitive)": "英字 (大文字・小文字の区別なし)",
+    "Function keys": "ファンクションキー",
+    "Arrow keys": "方向キー",
+    "Common command keys": "一般的な操作キー",
+    "Editing keys": "編集キー",
+    "Page navigation keys": "ページ移動キー",
+    "Punctuation and symbols": "記号と句読点",
+    "Hold Ctrl while pressing A.": "Ctrl を押しながら A を押します。",
+    "Hold Alt and Ctrl while pressing G.": "Alt と Ctrl を押しながら G を押します。",
+    "Hold Shift while pressing F5.": "Shift を押しながら F5 を押します。",
+    "Hold Super (Windows key) while pressing Return.": "Super (Windows キー) を押しながら Return を押します。",
+    "Accepted: Ctrl/Control, Alt, Shift, Super/Win/Meta.": "使用可能な修飾キー: Ctrl/Control、Alt、Shift、Super/Win/Meta。",
+    "Empty field means unassigned.": "空欄の項目には割り当てません。",
+    "Save button and stick direction mappings per application.": "ボタンとスティック方向をアプリごとのプリセットに保存します。",
+    "Stored in settings.json.": "プリセットは settings.json に保存されます。"
   }
 }

@@ -111,6 +111,24 @@
     "Start stream to read sensors": "启动串流查看传感器",
     "WUP / LIVE INPUT": "WUP / 输入",
     "ACCEL (g)": "加速度 (g)",
-    "Key mapping help body": "按键映射：支持字母 (a)、F1～F12、方向键、Enter、Escape 和 Space。组合键示例：Ctrl+A、Alt+Ctrl+G、Shift+F5、Super+Return。留空表示不映射。预设按应用保存按键和摇杆方向。"
+    "Key mapping help body": "按键映射：支持字母 (a)、F1～F12、方向键、Enter、Escape 和 Space。组合键示例：Ctrl+A、Alt+Ctrl+G、Shift+F5、Super+Return。留空表示不映射。预设按应用保存按键和摇杆方向。",
+    "Supported keys": "可用按键",
+    "Key combinations": "组合按键",
+    "Mappings and presets": "映射与预设",
+    "Letters (case-insensitive)": "字母（不区分大小写）",
+    "Function keys": "功能键",
+    "Arrow keys": "方向键",
+    "Common command keys": "常用命令键",
+    "Editing keys": "编辑键",
+    "Page navigation keys": "页面导航键",
+    "Punctuation and symbols": "标点与符号",
+    "Hold Ctrl while pressing A.": "按住 Ctrl 再按 A。",
+    "Hold Alt and Ctrl while pressing G.": "按住 Alt 和 Ctrl 再按 G。",
+    "Hold Shift while pressing F5.": "按住 Shift 再按 F5。",
+    "Hold Super (Windows key) while pressing Return.": "按住 Super（Windows 键）再按 Return。",
+    "Accepted: Ctrl/Control, Alt, Shift, Super/Win/Meta.": "支持的修饰键：Ctrl/Control、Alt、Shift、Super/Win/Meta。",
+    "Empty field means unassigned.": "留空表示不分配按键。",
+    "Save button and stick direction mappings per application.": "可按应用保存按钮及摇杆方向映射。",
+    "Stored in settings.json.": "预设保存在 settings.json 中。"
   }
 }

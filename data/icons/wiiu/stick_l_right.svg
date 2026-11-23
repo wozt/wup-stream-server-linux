@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="32" height="24" viewBox="0 0 32 24">
+  <circle cx="10" cy="12" r="9" fill="#12171d" stroke="#aeb9c4" stroke-width="1.35"/>
+  <circle cx="10" cy="12" r="6.5" fill="#29323b" stroke="#66717c" stroke-width="0.7"/>
+  <text x="10" y="15" text-anchor="middle" font-family="DejaVu Sans, sans-serif" font-size="8.4" font-weight="bold" fill="#f5f7fa">L</text>
+  <path d="M19 12H29 M25 8L29 12L25 16" fill="none" stroke="#e6ebef" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

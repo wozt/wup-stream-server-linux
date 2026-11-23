@@ -111,6 +111,24 @@
     "Start stream to read sensors": "Запустите поток для датчиков",
     "WUP / LIVE INPUT": "WUP / ВВОД",
     "ACCEL (g)": "УСКОР. (g)",
-    "Key mapping help body": "Назначение клавиш: буквы (a), F1…F12, стрелки, Enter, Escape, пробел. Сочетания: Ctrl+A, Alt+Ctrl+G, Shift+F5, Super+Return. Пустое поле отключает назначение. Профили сохраняют кнопки и направления стиков для каждого приложения."
+    "Key mapping help body": "Назначение клавиш: буквы (a), F1…F12, стрелки, Enter, Escape, пробел. Сочетания: Ctrl+A, Alt+Ctrl+G, Shift+F5, Super+Return. Пустое поле отключает назначение. Профили сохраняют кнопки и направления стиков для каждого приложения.",
+    "Supported keys": "Доступные клавиши",
+    "Key combinations": "Сочетания клавиш",
+    "Mappings and presets": "Назначения и профили",
+    "Letters (case-insensitive)": "Буквы (регистр не важен)",
+    "Function keys": "Функциональные клавиши",
+    "Arrow keys": "Клавиши со стрелками",
+    "Common command keys": "Часто используемые клавиши",
+    "Editing keys": "Клавиши редактирования",
+    "Page navigation keys": "Навигация по страницам",
+    "Punctuation and symbols": "Знаки препинания и символы",
+    "Hold Ctrl while pressing A.": "Удерживайте Ctrl и нажмите A.",
+    "Hold Alt and Ctrl while pressing G.": "Удерживайте Alt и Ctrl, затем нажмите G.",
+    "Hold Shift while pressing F5.": "Удерживайте Shift и нажмите F5.",
+    "Hold Super (Windows key) while pressing Return.": "Удерживайте Super (клавиша Windows) и нажмите Enter.",
+    "Accepted: Ctrl/Control, Alt, Shift, Super/Win/Meta.": "Модификаторы: Ctrl/Control, Alt, Shift, Super/Win/Meta.",
+    "Empty field means unassigned.": "Пустое поле означает отсутствие назначения.",
+    "Save button and stick direction mappings per application.": "Сохраняйте кнопки и направления стиков в профиле для приложения.",
+    "Stored in settings.json.": "Профили сохраняются в settings.json."
   }
 }
