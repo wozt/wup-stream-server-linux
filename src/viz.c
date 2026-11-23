@@ -11,10 +11,32 @@
 #include <stdlib.h>
 #include <string.h>
 
+/* WUP_V5_JSON_THEMES: 8 explicit palette roles, shared with theme JSON. */
+enum {VBG,VSHELL,VSCREEN,VBORDER,VTEXT,VMUTED,VACCENT,VNEGATIVE,VCOLORS};
 typedef struct {
     wupstream_input_t in;
     gboolean has;
+    gboolean themed;
+    GdkRGBA palette[VCOLORS];
 } viz_state_t;
+static cairo_user_data_key_t viz_theme_key;
+
+void pad_viz_set_palette(GtkWidget *w,const char *background,const char *shell,
+                         const char *screen,const char *border,
+                         const char *text,const char *muted,
+                         const char *accent,const char *negative) {
+    if (!w) return;
+    viz_state_t *st=g_object_get_data(G_OBJECT(w),"viz-state");
+    if (!st) return;
+    const char *colors[VCOLORS]={background,shell,screen,border,
+                                  text,muted,accent,negative};
+    GdkRGBA next[VCOLORS];
+    for (int i=0;i<VCOLORS;i++)
+        if (!colors[i] || !gdk_rgba_parse(&next[i],colors[i])) return;
+    memcpy(st->palette,next,sizeof next);
+    st->themed=TRUE;
+    gtk_widget_queue_draw(w);
+}
 
 #define VW 440.0
 #define VH 240.0
@@ -30,12 +52,37 @@ static double clampd(double v, double lo, double hi) {
     return v < lo ? lo : (v > hi ? hi : v);
 }
 
-static void rgba(cairo_t *cr, double r, double g, double b, double a) {
-    cairo_set_source_rgba(cr, r, g, b, a);
+static const viz_state_t *viz_paint_state(cairo_t *cr) {
+    const viz_state_t *st=cairo_get_user_data(cr,&viz_theme_key);
+    return st && st->themed ? st : NULL;
 }
-
+static void viz_role(cairo_t *cr, int role, double a) {
+    const viz_state_t *st=viz_paint_state(cr);
+    if (!st) {cairo_set_source_rgba(cr,1,1,1,a);return;}
+    const GdkRGBA *c=&st->palette[role];
+    cairo_set_source_rgba(cr,c->red,c->green,c->blue,a);
+}
+static void viz_grad(cairo_pattern_t *p,double offset, cairo_t *cr,
+                     int role,double factor) {
+    const viz_state_t *st=viz_paint_state(cr);
+    if (!st) return;
+    const GdkRGBA *c=&st->palette[role];
+    cairo_pattern_add_color_stop_rgb(p,offset,
+         fmin(c->red*factor,1),fmin(c->green*factor,1),fmin(c->blue*factor,1));
+}
+static void rgba(cairo_t *cr, double r, double g, double b, double a) {
+    const viz_state_t *st=viz_paint_state(cr);
+    if (!st) {cairo_set_source_rgba(cr,r,g,b,a);return;}
+    /* Retint legacy linework and labels; never use fixed blue on themed pads. */
+    const double lum=.2126*r+.7152*g+.0722*b;
+    int role=(r>.7 && r>g*1.24 && g>b*.9) ? VNEGATIVE :
+             lum>.60 ? VTEXT : lum>.33 ? VBORDER :
+             lum>.18 ? VMUTED : lum>.10 ? VSHELL : VBG;
+    viz_role(cr,role,a);
+}
 static void accent_color(cairo_t *cr, double a) {
-    rgba(cr, accent[0], accent[1], accent[2], a);
+    if (viz_paint_state(cr)) viz_role(cr,VACCENT,a);
+    else rgba(cr,accent[0],accent[1],accent[2],a);
 }
 
 static void round_path(cairo_t *cr, double x, double y,
@@ -61,7 +108,11 @@ static void label(cairo_t *cr, const char *str, double x, double baseline,
     cairo_select_font_face(cr, "Sans", CAIRO_FONT_SLANT_NORMAL,
                            bold ? CAIRO_FONT_WEIGHT_BOLD : CAIRO_FONT_WEIGHT_NORMAL);
     cairo_set_font_size(cr, size);
-    rgba(cr, r, g, b, alpha);
+    if (viz_paint_state(cr) && r < .12 && g < .25 && b < .26)
+        viz_role(cr,VBG,alpha);
+    else if (viz_paint_state(cr))
+        viz_role(cr,alpha < .79 ? VMUTED : VTEXT,alpha);
+    else rgba(cr,r,g,b,alpha);
     if (center) {
         cairo_text_extents_t e;
         cairo_text_extents(cr, str, &e);
@@ -85,14 +136,21 @@ static void housing(cairo_t *cr) {
 
     round_path(cr, 5, 25, 430, 205, 55);
     cairo_pattern_t *p = cairo_pattern_create_linear(0, 25, 0, 232);
-    cairo_pattern_add_color_stop_rgb(p, 0, .255, .277, .322);
-    cairo_pattern_add_color_stop_rgb(p, .4, .162, .180, .220);
-    cairo_pattern_add_color_stop_rgb(p, 1, .105, .119, .155);
+    if (viz_paint_state(cr)) {
+        viz_grad(p,0,cr,VSHELL,1.12);
+        viz_grad(p,.4,cr,VSHELL,.98);
+        viz_grad(p,1,cr,VSHELL,.78);
+    } else {
+        cairo_pattern_add_color_stop_rgb(p,0,.255,.277,.322);
+        cairo_pattern_add_color_stop_rgb(p,.4,.162,.180,.220);
+        cairo_pattern_add_color_stop_rgb(p,1,.105,.119,.155);
+    }
     cairo_set_source(cr, p);
     cairo_fill_preserve(cr);
     cairo_pattern_destroy(p);
-    rgba(cr, .65, .70, .78, .46);
-    cairo_set_line_width(cr, 1.65);
+    if (viz_paint_state(cr)) viz_role(cr,VBORDER,.75);
+    else rgba(cr,.65,.70,.78,.46);
+    cairo_set_line_width(cr,1.65);
     cairo_stroke(cr);
 
     round_path(cr, 10, 30, 420, 195, 51);
@@ -240,16 +298,23 @@ static void small_key(cairo_t *cr, double x, double y, double radius,
 static void screen_frame(cairo_t *cr) {
     /* 16:9 LCD in its own well, never under the buttons. */
     round_path(cr, 100, 49, 240, 143, 8);
-    rgba(cr, .018, .027, .042, 1);
+    if (viz_paint_state(cr)) viz_role(cr,VBG,1);
+    else rgba(cr,.018,.027,.042,1);
     cairo_fill_preserve(cr);
-    rgba(cr, .57, .62, .70, .62);
-    cairo_set_line_width(cr, 2.0);
+    if (viz_paint_state(cr)) viz_role(cr,VBORDER,.9);
+    else rgba(cr,.57,.62,.70,.62);
+    cairo_set_line_width(cr,2.0);
     cairo_stroke(cr);
 
     round_path(cr, 106, 56, 228, 128, 3.5);
     cairo_pattern_t *p = cairo_pattern_create_linear(106, 56, 334, 184);
-    cairo_pattern_add_color_stop_rgb(p, 0, .065, .111, .157);
-    cairo_pattern_add_color_stop_rgb(p, 1, .027, .050, .080);
+    if (viz_paint_state(cr)) {
+        viz_grad(p,0,cr,VSCREEN,1.12);
+        viz_grad(p,1,cr,VSCREEN,.92);
+    } else {
+        cairo_pattern_add_color_stop_rgb(p,0,.065,.111,.157);
+        cairo_pattern_add_color_stop_rgb(p,1,.027,.050,.080);
+    }
     cairo_set_source(cr, p);
     cairo_fill(cr);
     cairo_pattern_destroy(p);
@@ -433,7 +498,9 @@ static gboolean viz_draw(GtkWidget *w, cairo_t *cr, gpointer unused) {
 
     GtkAllocation al;
     gtk_widget_get_allocation(w, &al);
-    rgba(cr, .064, .078, .112, 1);
+    cairo_set_user_data(cr,&viz_theme_key,st,NULL);
+    if (viz_paint_state(cr)) viz_role(cr,VBG,1);
+    else rgba(cr, .064, .078, .112, 1);
     cairo_paint(cr);
     if (al.width <= 0 || al.height <= 0) return FALSE;
 

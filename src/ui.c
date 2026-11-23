@@ -36,7 +36,8 @@ struct ui_t {
     GtkWidget *row1, *row2, *input_cols; /* adaptive layout */
     int stream_icon_mode; /* update button icon only on state changes */
     GtkCssProvider *theme_css;
-    GtkWidget *theme_buttons[5];
+    GtkWidget *theme_combo;
+    GPtrArray *themes; /* WUP_V5_JSON_THEMES */
     /* audio */
     GtkWidget *aout_chk, *ain_chk, *monitor_combo;
     /* pad */
@@ -62,149 +63,270 @@ static void commit_capture(ui_t *u) { schedule_save(u); server_restart_capture(u
 static void commit_reconnect(ui_t *u) { schedule_save(u); server_request_reconnect(u->srv); }
 static void commit_live(ui_t *u) { schedule_save(u); }
 
-/* WUP_V4_THEME_SWITCHER: live, scoped GTK3 palettes; no global OS theme change. */
+/* WUP_V5_JSON_THEMES: data-driven palettes; user-defined themes can override shipped IDs.
+ * No CSS is read from JSON: only validated hexadecimal colors enter the provider.
+ * The selected ID, not a numeric index, is persisted in settings.json. */
 typedef struct {
-    const char *name, *background, *panel, *entry, *border;
-    const char *text, *muted, *accent, *button, *hover, *active;
-} wup_theme_palette_t;
+    char *id, *name;
+    char *ui[11];
+    char *pad[8];
+} wup_theme_t;
 
-static const wup_theme_palette_t wup_palettes[5] = {
-    /* true neutral charcoal: no blue cast */
-    {"Graphite", "#222224", "#2c2c2f", "#1b1b1d", "#505053",
-     "#eeeeef", "#b5b5b8", "#e4e4e7", "#38383c", "#46464a", "#59595e"},
-    {"Light", "#f0f1f3", "#ffffff", "#f8f9fb", "#c5ccd4",
-     "#20252d", "#586575", "#2463a6", "#e7ebf0", "#d9e1ea", "#b8d7f5"},
-    /* original blue-grey V3, refined */
-    {"Ocean", "#111923", "#192532", "#0f1b27", "#35485b",
-     "#dce7f1", "#9fb5c8", "#96cdf9", "#253547", "#334c66", "#285277"},
-    {"Emerald", "#101b17", "#172a22", "#0b1c17", "#315e4b",
-     "#e0f3e9", "#a3c6b4", "#65ddb0", "#244537", "#315d49", "#226a4b"},
-    {"Rose", "#21161e", "#30202c", "#1b1119", "#69465d",
-     "#f6e5ed", "#cfacc0", "#ffa3d0", "#4b3043", "#65405b", "#823f68"}
+static const char *const wup_ui_keys[] = {
+    "background", "panel", "entry", "border", "text", "muted",
+    "accent", "button", "hover", "active", "negative"
 };
+static const char *const wup_pad_keys[] = {
+    "background", "shell", "screen", "border",
+    "text", "muted", "accent", "negative"
+};
+
+static void wup_theme_free(gpointer obj) {
+    wup_theme_t *t = obj;
+    if (!t) return;
+    g_free(t->id); g_free(t->name);
+    for (guint i=0; i<G_N_ELEMENTS(t->ui); i++) g_free(t->ui[i]);
+    for (guint i=0; i<G_N_ELEMENTS(t->pad); i++) g_free(t->pad[i]);
+    g_free(t);
+}
+
+static gboolean wup_hex_color(const char *s) {
+    if (!s || strlen(s) != 7 || s[0] != '#') return FALSE;
+    for (guint i=1; i<7; i++)
+        if (!g_ascii_isxdigit(s[i])) return FALSE;
+    return TRUE;
+}
+
+static gboolean wup_id_valid(const char *s) {
+    if (!s || !*s || strlen(s) > 63) return FALSE;
+    for (; *s; s++)
+        if (!(g_ascii_islower(*s) || g_ascii_isdigit(*s) ||
+              *s == '-' || *s == '_')) return FALSE;
+    return TRUE;
+}
+
+static gboolean wup_read_colors(JsonObject *object, const char *const *keys,
+                                 guint count, char **output) {
+    if (!object) return FALSE;
+    for (guint i=0; i<count; i++) {
+        if (!json_object_has_member(object, keys[i])) return FALSE;
+        JsonNode *n = json_object_get_member(object, keys[i]);
+        if (!n || !JSON_NODE_HOLDS_VALUE(n) ||
+            json_node_get_value_type(n) != G_TYPE_STRING) return FALSE;
+        const char *s = json_node_get_string(n);
+        if (!wup_hex_color(s)) return FALSE;
+        output[i] = g_strdup(s);
+    }
+    return TRUE;
+}
+
+static wup_theme_t *wup_theme_read(const char *path) {
+    JsonParser *parser = json_parser_new();
+    GError *err = NULL;
+    if (!json_parser_load_from_file(parser, path, &err)) {
+        g_warning("Theme %s: %s", path, err ? err->message : "parse error");
+        g_clear_error(&err); g_object_unref(parser);
+        return NULL;
+    }
+    JsonNode *node = json_parser_get_root(parser);
+    JsonObject *obj = node && JSON_NODE_HOLDS_OBJECT(node)
+                    ? json_node_get_object(node) : NULL;
+    const char *id = obj ? json_object_get_string_member_with_default(obj,"id",NULL) : NULL;
+    const char *name = obj ? json_object_get_string_member_with_default(obj,"name",NULL) : NULL;
+    if (!wup_id_valid(id) || !name || !*name || strlen(name) > 100) {
+        g_warning("Theme %s: invalid id/name",path);
+        g_object_unref(parser); return NULL;
+    }
+    JsonObject *colors = json_object_has_member(obj,"colors") ?
+                         json_object_get_object_member(obj,"colors") : NULL;
+    JsonObject *gamepad = json_object_has_member(obj,"gamepad") ?
+                          json_object_get_object_member(obj,"gamepad") : NULL;
+    wup_theme_t *t = g_new0(wup_theme_t,1);
+    t->id=g_strdup(id); t->name=g_strdup(name);
+    gboolean ok = wup_read_colors(colors, wup_ui_keys,
+                         G_N_ELEMENTS(wup_ui_keys),t->ui) &&
+                  wup_read_colors(gamepad,wup_pad_keys,
+                         G_N_ELEMENTS(wup_pad_keys),t->pad);
+    if (!ok) {
+        g_warning("Theme %s: missing or invalid #RRGGBB color",path);
+        wup_theme_free(t); t=NULL;
+    }
+    g_object_unref(parser);
+    return t;
+}
+
+static gint wup_filename_order(gconstpointer a, gconstpointer b) {
+    return g_strcmp0(a,b);
+}
+
+static void wup_scan_theme_dir(GPtrArray *themes, const char *folder) {
+    if (!folder) return;
+    GDir *dir = g_dir_open(folder, 0, NULL);
+    if (!dir) return;
+    GList *names = NULL;
+    const char *name;
+    while ((name=g_dir_read_name(dir))) {
+        if (g_str_has_suffix(name,".json"))
+            names = g_list_prepend(names, g_strdup(name));
+    }
+    g_dir_close(dir);
+    names = g_list_sort(names,wup_filename_order);
+    for (GList *it=names; it; it=it->next) {
+        char *path = g_build_filename(folder,(const char*)it->data,NULL);
+        wup_theme_t *t = wup_theme_read(path);
+        if (t) {
+            gboolean replaced=FALSE;
+            for (guint i=0; i<themes->len; i++) {
+                wup_theme_t *old = g_ptr_array_index(themes,i);
+                if (g_strcmp0(old->id,t->id)==0) {
+                    g_ptr_array_index(themes,i)=t;
+                    wup_theme_free(old);
+                    replaced=TRUE;
+                    break;
+                }
+            }
+            if (!replaced) g_ptr_array_add(themes,t);
+        }
+        g_free(path);
+    }
+    g_list_free_full(names,g_free);
+}
+
+static GPtrArray *wup_load_themes(void) {
+    GPtrArray *themes = g_ptr_array_new_with_free_func(wup_theme_free);
+    char *exe=g_file_read_link("/proc/self/exe",NULL);
+    char *dir=exe ? g_path_get_dirname(exe) : NULL;
+    char *dev=dir ? g_build_filename(dir,"..","data","themes",NULL) : NULL;
+    char *local=g_build_filename("data","themes",NULL);
+    /* Precedence, low -> high: system install, source tree, user folder. */
+    const gchar *const *datadirs = g_get_system_data_dirs();
+    for (guint i=0; datadirs && datadirs[i]; i++) {
+        char *installed=g_build_filename(datadirs[i],"wupstreamd","themes",NULL);
+        wup_scan_theme_dir(themes,installed);
+        g_free(installed);
+    }
+    wup_scan_theme_dir(themes,dev);
+    if (!dev || !g_file_test(dev,G_FILE_TEST_IS_DIR))
+        wup_scan_theme_dir(themes,local);
+    char *usr=g_build_filename(g_get_user_config_dir(),"wup-stream-serveur","themes",NULL);
+    wup_scan_theme_dir(themes,usr);  /* user JSON takes precedence */
+    g_free(usr);g_free(local);g_free(dev);g_free(dir);g_free(exe);
+    return themes;
+}
+
+static wup_theme_t *wup_selected_theme(ui_t *u) {
+    if (!u || !u->themes) return NULL;
+    for (guint i=0; i<u->themes->len; i++) {
+        wup_theme_t *t=g_ptr_array_index(u->themes,i);
+        if (!g_strcmp0(t->id,u->s->theme_id)) return t;
+    }
+    return NULL;
+}
 
 static void wup_apply_theme(ui_t *u) {
     if (!u || !u->theme_css) return;
-    int index = u->s->ui_theme;
-    if (index < 0 || index >= 5) index = 2;
-    const wup_theme_palette_t *p = &wup_palettes[index];
-    GString *css = g_string_new(NULL);
+    wup_theme_t *t=wup_selected_theme(u);
+    if (!t) return;
+    const char *bg=t->ui[0],*panel=t->ui[1],*entry=t->ui[2],*border=t->ui[3];
+    const char *fg=t->ui[4],*muted=t->ui[5],*accent=t->ui[6],*button=t->ui[7];
+    const char *hover=t->ui[8],*active=t->ui[9];
+    GString *css=g_string_new(NULL);
     g_string_append_printf(css,
-        "window.wup-settings { background-color: %s; color: %s; }"
-        ".wup-settings { color: %s; }"
-        ".wup-settings * { font-size: 11px; }",
-        p->background, p->text, p->text);
+        "window.wup-settings, .wup-settings { background-color:%s; color:%s; }"
+        ".wup-settings * { font-size: 11px; }"
+        ".wup-settings frame { background-color:%s; border:1px solid %s; border-radius:8px; "
+        "margin:1px; padding:2px; }"
+        ".wup-settings .wup-section-title { color:%s; font-weight:bold; padding:0 3px 0 0; }"
+        ".wup-settings label { color:%s; padding:0; }"
+        ".wup-settings label:disabled { color:%s; }",
+        bg,fg,panel,border,accent,fg,muted);
     g_string_append_printf(css,
-        ".wup-settings frame { background-color: %s; border: 1px solid %s; "
-        "border-radius: 8px; margin: 1px; padding: 2px; }"
-        ".wup-settings .wup-section-title { color: %s; font-weight: bold; "
-        "padding: 0px 3px 0px 0px; }"
-        ".wup-settings label { color: %s; padding: 0px; }"
-        ".wup-settings label:disabled { color: %s; }",
-        p->panel, p->border, p->accent, p->text, p->muted);
+        ".wup-settings button { min-height:17px; padding:1px 6px; border:1px solid %s; "
+        "border-radius:5px; background-image:none; background-color:%s; color:%s; }"
+        ".wup-settings button:hover { background-color:%s; border-color:%s; }"
+        ".wup-settings button:active, .wup-settings button:checked { background-color:%s; }"
+        ".wup-settings button:disabled { color:%s; }"
+        ".wup-settings .wup-icon-button { min-width:20px; padding:1px 3px; }",
+        border,button,fg,hover,accent,active,muted);
     g_string_append_printf(css,
-        ".wup-settings button { min-height: 17px; padding: 1px 6px; "
-        "border: 1px solid %s; border-radius: 5px; "
-        "background-image: none; background-color: %s; color: %s; }"
-        ".wup-settings button:hover { background-color: %s; border-color: %s; }"
-        ".wup-settings button:active, .wup-settings button:checked { background-color: %s; }"
-        ".wup-settings button:disabled { color: %s; }"
-        ".wup-settings .wup-icon-button { min-width: 20px; padding: 1px 3px; }",
-        p->border, p->button, p->text, p->hover, p->accent, p->active, p->muted);
-    g_string_append_printf(css,
-        ".wup-settings entry { min-height: 17px; padding: 1px 4px; "
-        "background-color: %s; color: %s; border-radius: 4px; "
-        "border: 1px solid %s; }"
-        ".wup-settings entry:focus { border-color: %s; }"
-        ".wup-settings entry selection { background-color: %s; color: %s; }",
-        p->entry, p->text, p->border, p->accent, p->active, p->text);
-    g_string_append_printf(css,
-        ".wup-settings spinbutton { min-height: 17px; padding: 0px; }"
-        ".wup-settings spinbutton entry { min-height: 17px; padding: 1px 3px; }"
-        ".wup-settings spinbutton button { min-width: 14px; min-height: 17px; padding: 0px 1px; }"
-        ".wup-settings combobox { min-height: 17px; padding: 0px; }"
-        ".wup-settings combobox button { min-height: 17px; padding: 0px 4px; }"
-        ".wup-settings checkbutton { min-height: 17px; padding: 0px; }"
-        ".wup-settings checkbutton check { min-width: 14px; min-height: 14px; "
-        "border-radius: 3px; background-color: %s; border: 1px solid %s; color: %s; }"
-        ".wup-settings checkbutton check:checked { background-color: %s; color: %s; }"
-        ".wup-settings scrolledwindow { background-color: transparent; }"
-        ".wup-settings image { color: %s; }",
-        p->entry, p->border, p->text, p->active, p->text, p->text);
-
-    /* Each of the five 23px buttons is a color-coded theme preview. */
-    static const char *classes[5] = {"graphite", "light", "ocean", "emerald", "rose"};
-    static const char *swatches[5] = {"#38383c", "#f0f1f3", "#247ab6", "#287b57", "#ad5286"};
-    static const char *ink[5] = {"#f4f4f6", "#242b34", "#f4fcff", "#f0fff6", "#fff0f8"};
-    for (int i = 0; i < 5; i++) {
-        g_string_append_printf(css,
-            ".wup-settings button.wup-theme-%s { min-width: 22px; min-height: 22px; "
-            "padding: 1px; border-radius: 6px; background-image: none; "
-            "background-color: %s; color: %s; border: 1px solid %s; }"
-            ".wup-settings button.wup-theme-%s image { color: %s; }"
-            ".wup-settings button.wup-theme-%s:checked { border: 2px solid %s; "
-            "box-shadow: 0 0 0 1px %s; }",
-            classes[i], swatches[i], ink[i], p->border,
-            classes[i], ink[i], classes[i], p->accent, p->accent);
-    }
-    GError *error = NULL;
-    gtk_css_provider_load_from_data(u->theme_css, css->str, -1, &error);
-    if (error) {
-        g_warning("WUP theme CSS: %s", error->message);
-        g_error_free(error);
-    }
-    g_string_free(css, TRUE);
-}
-
-static void wup_theme_toggled(GtkToggleButton *btn, ui_t *u) {
-    int selected = GPOINTER_TO_INT(g_object_get_data(G_OBJECT(btn), "wup-theme-index"));
-    if (selected < 0 || selected >= 5) return;
-    if (!gtk_toggle_button_get_active(btn)) {
-        /* Re-clicking the selected button must not leave no theme selected. */
-        if (selected == u->s->ui_theme)
-            gtk_toggle_button_set_active(btn, TRUE);
-        return;
-    }
-    gboolean changed = u->s->ui_theme != selected;
-    /* Change state first, so deselection signals cannot reactivate old buttons. */
-    u->s->ui_theme = selected;
-    for (int i = 0; i < 5; i++) {
-        if (i != selected && u->theme_buttons[i])
-            gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(u->theme_buttons[i]), FALSE);
-    }
-    if (changed) {
-        wup_apply_theme(u);  /* synchronous: no restart, no stream interruption */
-        schedule_save(u);
+        ".wup-settings entry { min-height:17px; padding:1px 4px; background-color:%s; "
+        "color:%s; border-radius:4px; border:1px solid %s; }"
+        ".wup-settings entry:focus { border-color:%s; }"
+        ".wup-settings entry selection { background-color:%s; color:%s; }"
+        ".wup-settings spinbutton { min-height:17px; padding:0; }"
+        ".wup-settings spinbutton entry { min-height:17px; padding:1px 3px; }"
+        ".wup-settings spinbutton button { min-width:14px; min-height:17px; padding:0 1px; }"
+        ".wup-settings combobox { min-height:17px; padding:0; }"
+        ".wup-settings combobox button { min-height:17px; padding:0 4px; }"
+        ".wup-settings checkbutton { min-height:17px; padding:0; }"
+        ".wup-settings checkbutton check { min-width:14px; min-height:14px; "
+        "border-radius:3px; background-color:%s; border:1px solid %s; color:%s; }"
+        ".wup-settings checkbutton check:checked { background-color:%s; color:%s; }"
+        ".wup-settings scrolledwindow { background-color:transparent; }"
+        ".wup-settings image { color:%s; }",
+        entry,fg,border,accent,active,fg,entry,border,fg,active,fg,fg);
+    GError *err=NULL;
+    gtk_css_provider_load_from_data(u->theme_css,css->str,-1,&err);
+    if (err) {g_warning("Theme CSS: %s",err->message);g_clear_error(&err);}
+    g_string_free(css,TRUE);
+    if (u->viz_area) {
+        pad_viz_set_palette(u->viz_area,
+            t->pad[0],t->pad[1],t->pad[2],t->pad[3],
+            t->pad[4],t->pad[5],t->pad[6],t->pad[7]);
     }
 }
 
-static GtkWidget *wup_theme_bar(ui_t *u) {
-    static const char *names[] = {"Graphite (neutral grey)", "Light", "Ocean blue",
-                                  "Emerald green", "Rose pink"};
-    static const char *icons[] = {"weather-clear-night-symbolic", "weather-clear-symbolic",
-                                  "preferences-desktop-theme-symbolic", "emblem-default-symbolic",
-                                  "emblem-favorite-symbolic"};
-    static const char *fallback[] = {"D", "L", "B", "G", "P"};
-    static const char *classes[] = {"wup-theme-graphite", "wup-theme-light",
-                                    "wup-theme-ocean", "wup-theme-emerald", "wup-theme-rose"};
-    GtkWidget *bar = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 3);
-    GtkIconTheme *theme = gtk_icon_theme_get_default();
-    for (int i = 0; i < 5; i++) {
-        GtkWidget *b = gtk_toggle_button_new();
-        GtkWidget *content = gtk_icon_theme_has_icon(theme, icons[i])
-            ? gtk_image_new_from_icon_name(icons[i], GTK_ICON_SIZE_MENU)
-            : gtk_label_new(fallback[i]);
-        gtk_container_add(GTK_CONTAINER(b), content);
-        gtk_widget_set_tooltip_text(b, names[i]);
-        gtk_widget_set_size_request(b, 23, 23);
-        gtk_style_context_add_class(gtk_widget_get_style_context(b), "wup-theme-button");
-        gtk_style_context_add_class(gtk_widget_get_style_context(b), classes[i]);
-        g_object_set_data(G_OBJECT(b), "wup-theme-index", GINT_TO_POINTER(i));
-        gtk_box_pack_start(GTK_BOX(bar), b, FALSE, FALSE, 0);
-        u->theme_buttons[i] = b;
-        gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(b), i == u->s->ui_theme);
-        g_signal_connect(b, "toggled", G_CALLBACK(wup_theme_toggled), u);
+static void wup_theme_combo_changed(GtkComboBox *combo, ui_t *u) {
+    const char *id=gtk_combo_box_get_active_id(combo);
+    if (!id || !g_strcmp0(id,u->s->theme_id)) return;
+    g_strlcpy(u->s->theme_id,id,sizeof(u->s->theme_id));
+    wup_apply_theme(u);
+    schedule_save(u);
+}
+
+static void wup_theme_refresh(ui_t *u) {
+    if (!u || !u->theme_combo) return;
+    g_signal_handlers_block_by_func(u->theme_combo,G_CALLBACK(wup_theme_combo_changed),u);
+    gtk_combo_box_text_remove_all(GTK_COMBO_BOX_TEXT(u->theme_combo));
+    if (u->themes) g_ptr_array_unref(u->themes);
+    u->themes = wup_load_themes();
+    for (guint i=0; i<u->themes->len; i++) {
+        wup_theme_t *t=g_ptr_array_index(u->themes,i);
+        gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(u->theme_combo),t->id,t->name);
     }
+    if (!gtk_combo_box_set_active_id(GTK_COMBO_BOX(u->theme_combo),u->s->theme_id)) {
+        if (!gtk_combo_box_set_active_id(GTK_COMBO_BOX(u->theme_combo),"ocean"))
+            gtk_combo_box_set_active(GTK_COMBO_BOX(u->theme_combo),0);
+        const char *id=gtk_combo_box_get_active_id(GTK_COMBO_BOX(u->theme_combo));
+        if (id) g_strlcpy(u->s->theme_id,id,sizeof(u->s->theme_id));
+    }
+    g_signal_handlers_unblock_by_func(u->theme_combo,G_CALLBACK(wup_theme_combo_changed),u);
+    wup_apply_theme(u);
+}
+
+static void wup_theme_reload_clicked(GtkButton *button,ui_t *u) {
+    (void)button;
+    wup_theme_refresh(u);
+    schedule_save(u);
+}
+
+static GtkWidget *wup_theme_dropdown(ui_t *u) {
+    GtkWidget *bar=gtk_box_new(GTK_ORIENTATION_HORIZONTAL,3);
+    GtkWidget *l=gtk_label_new("Theme:");
+    gtk_box_pack_start(GTK_BOX(bar),l,FALSE,FALSE,0);
+    u->theme_combo=gtk_combo_box_text_new();
+    gtk_widget_set_size_request(u->theme_combo,125,-1);
+    gtk_widget_set_tooltip_text(u->theme_combo,"Live theme selection (JSON files)");
+    gtk_box_pack_start(GTK_BOX(bar),u->theme_combo,FALSE,FALSE,0);
+    GtkWidget *reload=gtk_button_new();
+    GtkWidget *icon=gtk_image_new_from_icon_name("view-refresh-symbolic",GTK_ICON_SIZE_MENU);
+    gtk_container_add(GTK_CONTAINER(reload),icon);
+    gtk_widget_set_tooltip_text(reload,"Reload JSON themes from disk");
+    gtk_style_context_add_class(gtk_widget_get_style_context(reload),"wup-icon-button");
+    gtk_box_pack_start(GTK_BOX(bar),reload,FALSE,FALSE,0);
+    wup_theme_refresh(u);
+    g_signal_connect(u->theme_combo,"changed",G_CALLBACK(wup_theme_combo_changed),u);
+    g_signal_connect(reload,"clicked",G_CALLBACK(wup_theme_reload_clicked),u);
     return bar;
 }
 
@@ -1268,7 +1390,7 @@ ui_t *ui_new(settings_t *s, server_t *srv) {
             g_object_unref(ic);
         }
     }
-    gtk_window_set_default_size(GTK_WINDOW(u->window), 960, 680);
+    gtk_window_set_default_size(GTK_WINDOW(u->window), 960, 688);
     g_signal_connect(u->window, "delete-event", G_CALLBACK(gtk_widget_hide_on_delete), NULL);
     gtk_widget_set_size_request(u->window, 680, 530);
 
@@ -1290,7 +1412,7 @@ ui_t *ui_new(settings_t *s, server_t *srv) {
     gtk_label_set_xalign(GTK_LABEL(u->status_lbl), 0);
     gtk_box_pack_start(GTK_BOX(top), u->status_lbl, FALSE, FALSE, 0);
     gtk_widget_set_tooltip_text(u->status_lbl, "Current stream connection status");
-    GtkWidget *themes = wup_theme_bar(u);  /* five live theme buttons, beside status */
+    GtkWidget *themes = wup_theme_dropdown(u);  /* JSON themes, live dropdown */
     gtk_box_pack_start(GTK_BOX(top), themes, FALSE, FALSE, 6);
     GtkWidget *top_spacer = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
     gtk_box_pack_start(GTK_BOX(top), top_spacer, TRUE, TRUE, 0);
@@ -1320,6 +1442,7 @@ ui_t *ui_new(settings_t *s, server_t *srv) {
     gtk_box_pack_start(GTK_BOX(row2), u->qual_frame, TRUE, TRUE, 0);
     gtk_box_pack_start(GTK_BOX(row2), build_audio_section(u), TRUE, TRUE, 0);
     gtk_box_pack_start(GTK_BOX(page), build_input_section(u), FALSE, FALSE, 0);
+    wup_apply_theme(u); /* visualizer exists now; theme it too */
     /* Configure-event is emitted when window size changes. */
     g_signal_connect(u->window, "configure-event",
                      G_CALLBACK(on_settings_configure), u);
@@ -1349,6 +1472,7 @@ ui_t *ui_new(settings_t *s, server_t *srv) {
 void ui_free(ui_t *u) {
     if (!u) return;
     if (u->save_id) g_source_remove(u->save_id);
+    if (u->themes) g_ptr_array_unref(u->themes);
     if (u->theme_css) {
         GdkScreen *screen = gdk_screen_get_default();
         if (screen)

@@ -36,7 +36,8 @@ void settings_defaults(settings_t *s) {
     s->audio_pad_to_pc = 0;
     s->low_latency = 1;
     snprintf(s->audio_monitor, sizeof s->audio_monitor, "default");
-    s->ui_theme = 2; /* WUP_V4_THEME_SWITCHER: default to existing Ocean palette */
+    s->ui_theme = 2; /* V4 default, for migration only */
+    g_strlcpy(s->theme_id, "ocean", sizeof(s->theme_id)); /* WUP_V5_JSON_THEMES */
     s->input.mode = INMODE_GAMEPAD;
     s->input.deadzone = 120;
     s->input.sensitivity = 100;
@@ -113,6 +114,11 @@ settings_t *settings_load(void) {
     s->autostart_stream = json_int(root, "autostart_stream", 0);
     s->ui_theme = json_int(root, "ui_theme", s->ui_theme);
     if (s->ui_theme < 0 || s->ui_theme >= 5) s->ui_theme = 2;
+    /* Existing users keep their selected V4 color on first V5 launch. */
+    static const char *old_themes[] = {"graphite","light","ocean","emerald","rose"};
+    g_strlcpy(s->theme_id,old_themes[s->ui_theme],sizeof(s->theme_id));
+    if (json_object_has_member(root,"theme_id"))
+        json_str(root,"theme_id",s->theme_id,sizeof(s->theme_id));
 
     JsonObject *src = json_obj(root, "source");
     if (src) {
@@ -215,7 +221,7 @@ void settings_save(settings_t *s) {
     json_object_set_int_member(root, "gamepad_only_black", s->gamepad_only_black);
     json_object_set_string_member(root, "audio_monitor", s->audio_monitor);
     json_object_set_int_member(root, "autostart_stream", s->autostart_stream);
-    json_object_set_int_member(root, "ui_theme", s->ui_theme);
+    json_object_set_string_member(root,"theme_id",s->theme_id);
 
     JsonObject *src = json_object_new();
     json_object_set_string_member(src, "output", s->source.output);
