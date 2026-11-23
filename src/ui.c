@@ -288,6 +288,9 @@ static void wup_apply_theme(ui_t *u) {
         ".wup-settings .wup-help-heading { color:%s; font-weight:bold; font-size:12px; }"
         ".wup-settings .wup-help-key { color:%s; font-weight:bold; font-family:monospace; }",
         accent,fg);
+    /* The question mark remains legible with every JSON theme. */
+    g_string_append(css,
+        ".wup-settings .wup-help-question { font-weight: 800; min-width: 22px; }");
     GError *err=NULL;
     gtk_css_provider_load_from_data(u->theme_css,css->str,-1,&err);
     if (err) {g_warning("Theme CSS: %s",err->message);g_clear_error(&err);}
@@ -1005,9 +1008,12 @@ static void wup_help_item(GtkWidget *grid, int row, const char *keys,
 
 static void on_key_help(GtkButton *b, ui_t *u) {
     (void)b;
-    GtkWidget *dlg = gtk_dialog_new_with_buttons(
-        wup_i18n_lookup(u->i18n, "Key mapping help"),
-        GTK_WINDOW(u->window), GTK_DIALOG_MODAL, NULL);
+    /* No native action buttons: our custom title bar handles Close. */
+    GtkWidget *dlg = gtk_dialog_new();
+    gtk_window_set_title(GTK_WINDOW(dlg),
+                         wup_i18n_lookup(u->i18n, "Key mapping help"));
+    gtk_window_set_transient_for(GTK_WINDOW(dlg), GTK_WINDOW(u->window));
+    gtk_window_set_modal(GTK_WINDOW(dlg), TRUE);
     gtk_window_set_decorated(GTK_WINDOW(dlg), FALSE);
     gtk_window_set_resizable(GTK_WINDOW(dlg), FALSE);
     gtk_window_set_position(GTK_WINDOW(dlg), GTK_WIN_POS_CENTER_ON_PARENT);
@@ -1075,10 +1081,14 @@ static void on_key_help(GtkButton *b, ui_t *u) {
     wup_help_item(presets, 1, "Preset", wup_i18n_lookup(u->i18n, "Save button and stick direction mappings per application."));
     wup_help_item(presets, 2, "settings.json", wup_i18n_lookup(u->i18n, "Stored in settings.json."));
 
-    /* Hide GTK's empty native dialog action area; the titlebar owns Close. */
-    GtkWidget *actions = gtk_dialog_get_action_area(GTK_DIALOG(dlg));
-    gtk_widget_set_no_show_all(actions, TRUE);
-    gtk_widget_hide(actions);
+    /* GTK3 GtkDialog exposes the action area as a buildable internal child.
+     * Keep it hidden without calling deprecated gtk_dialog_get_action_area(). */
+    GObject *action_area = gtk_buildable_get_internal_child(
+        GTK_BUILDABLE(dlg), NULL, "action_area");
+    if (GTK_IS_WIDGET(action_area)) {
+        gtk_widget_set_no_show_all(GTK_WIDGET(action_area), TRUE);
+        gtk_widget_hide(GTK_WIDGET(action_area));
+    }
     gtk_widget_show_all(dlg);
     gtk_dialog_run(GTK_DIALOG(dlg));
     gtk_widget_destroy(dlg);
@@ -1252,7 +1262,13 @@ static GtkWidget *build_input_section(ui_t *u) {
             refresh_cmd_presets(u);
             g_signal_connect(u->cmd_combo, "changed", G_CALLBACK(on_cmd_preset_changed), u);
             gtk_box_pack_start(GTK_BOX(prow), u->cmd_combo, TRUE, TRUE, 0);
-            GtkWidget *hb = symbol_button("help-browser-symbolic", "?", "Key mapping syntax help");
+            /* Explicit question mark, not a theme-dependent help-browser glyph. */
+            GtkWidget *hb = gtk_button_new_with_label("?");
+            gtk_widget_set_size_request(hb, 24, 22);
+            gtk_style_context_add_class(gtk_widget_get_style_context(hb),
+                                        "wup-icon-button");
+            gtk_style_context_add_class(gtk_widget_get_style_context(hb),
+                                        "wup-help-question");
             gtk_widget_set_tooltip_text(hb, "Key syntax help");
             g_signal_connect(hb, "clicked", G_CALLBACK(on_key_help), u);
             gtk_box_pack_start(GTK_BOX(prow), hb, FALSE, FALSE, 0);
