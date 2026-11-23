@@ -472,7 +472,7 @@ void input_dispatch(input_ctx_t *ctx, const settings_t *s, const wupstream_input
      * video is active. GamePad-only and cleared regions must be silent as
      * far as OS-volume changes are concerned, even though input stays live.
      * The hardware reports a RAW 0..255 value (wupstream_input_t.volume).
-     * Our pactl command is an absolute, strictly bounded 0..100%% value.
+     * Our pactl command is an absolute, strictly bounded 0..150%% value.
      * Remember the last value only when it was actually submitted: rapid
      * slider movements then settle to the FINAL position after 250 ms. */
     gboolean pc_volume_enabled = s->pad_volume_controls_pc &&
@@ -488,8 +488,10 @@ void input_dispatch(input_ctx_t *ctx, const settings_t *s, const wupstream_input
         if (t - ctx->vol_last >= 0.25) {
             int raw = in->volume;
             if (raw > 255) raw = 255;
-            int pct = (raw * 100 + 127) / 255;
-            if (pct > 100) pct = 100;
+            /* GamePad physical slider 0..100% maps to PC volume 0..150%.
+             * Raw report range is 0..255; +127 rounds to nearest percent. */
+            int pct = (raw * 150 + 127) / 255;
+            if (pct > 150) pct = 150;
             char value[16];
             snprintf(value, sizeof value, "%d%%", pct);
             gchar *argv[] = {"pactl", "set-sink-volume", "@DEFAULT_SINK@", value, NULL};

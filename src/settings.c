@@ -146,21 +146,21 @@ settings_t *settings_load(void) {
         if (json_object_has_member(in, "gyro_bias")) {
             JsonArray *gb = json_arr(in, "gyro_bias");
             if (gb)
-                for (int i = 0; i < 3 && i < json_array_get_length(gb); i++)
+                for (guint i = 0; i < 3 && i < json_array_get_length(gb); i++)
                     s->input.gyro_bias[i] = json_array_get_double_element(gb, i);
         }
         s->input.touch_as_mouse = json_int(in, "touch_as_mouse", s->input.touch_as_mouse);
         s->input.right_stick_mouse = json_int(in, "right_stick_mouse", s->input.right_stick_mouse);
         JsonArray *keys = json_arr(in, "keys");
         if (keys) {
-            for (int i = 0; i < 18 && i < json_array_get_length(keys); i++) {
+            for (guint i = 0; i < 18 && i < json_array_get_length(keys); i++) {
                 const char *v = json_array_get_string_element(keys, i);
                 if (v) snprintf(s->input.keys[i], 32, "%s", v);
             }
         }
         JsonArray *skeys = json_arr(in, "stick_keys");
         if (skeys) {
-            for (int i = 0; i < 8 && i < json_array_get_length(skeys); i++) {
+            for (guint i = 0; i < 8 && i < json_array_get_length(skeys); i++) {
                 const char *v = json_array_get_string_element(skeys, i);
                 if (v) snprintf(s->input.stick_keys[i], 32, "%s", v);
             }
@@ -177,13 +177,13 @@ settings_t *settings_load(void) {
                 json_str(po, "name", cp->name, sizeof cp->name);
                 JsonArray *pk = json_arr(po, "keys");
                 if (pk)
-                    for (int j = 0; j < 18 && j < json_array_get_length(pk); j++) {
+                    for (guint j = 0; j < 18 && j < json_array_get_length(pk); j++) {
                         const char *v = json_array_get_string_element(pk, j);
                         if (v) snprintf(cp->keys[j], 32, "%s", v);
                     }
                 JsonArray *ps = json_arr(po, "stick_keys");
                 if (ps)
-                    for (int j = 0; j < 8 && j < json_array_get_length(ps); j++) {
+                    for (guint j = 0; j < 8 && j < json_array_get_length(ps); j++) {
                         const char *v = json_array_get_string_element(ps, j);
                         if (v) snprintf(cp->stick_keys[j], 32, "%s", v);
                     }
