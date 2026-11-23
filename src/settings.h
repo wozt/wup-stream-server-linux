@@ -64,6 +64,7 @@ typedef struct {
     int audio_pc_to_pad;
     int audio_pad_to_pc;
     char audio_monitor[128];
+    int ui_theme; /* WUP_V4: 0=Graphite 1=Light 2=Ocean 3=Emerald 4=Rose */
     int autostart_stream;  /* start streaming when pad connects */
     int gamepad_only;      /* stream a static test image instead of capture (calibration) */
     int gamepad_only_black;/* gamepad-only sends black frames instead of test image */

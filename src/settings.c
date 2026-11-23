@@ -36,6 +36,7 @@ void settings_defaults(settings_t *s) {
     s->audio_pad_to_pc = 0;
     s->low_latency = 1;
     snprintf(s->audio_monitor, sizeof s->audio_monitor, "default");
+    s->ui_theme = 2; /* WUP_V4_THEME_SWITCHER: default to existing Ocean palette */
     s->input.mode = INMODE_GAMEPAD;
     s->input.deadzone = 120;
     s->input.sensitivity = 100;
@@ -110,6 +111,8 @@ settings_t *settings_load(void) {
     s->gamepad_only_black = json_int(root, "gamepad_only_black", 0);
     json_str(root, "audio_monitor", s->audio_monitor, sizeof s->audio_monitor);
     s->autostart_stream = json_int(root, "autostart_stream", 0);
+    s->ui_theme = json_int(root, "ui_theme", s->ui_theme);
+    if (s->ui_theme < 0 || s->ui_theme >= 5) s->ui_theme = 2;
 
     JsonObject *src = json_obj(root, "source");
     if (src) {
@@ -212,6 +215,7 @@ void settings_save(settings_t *s) {
     json_object_set_int_member(root, "gamepad_only_black", s->gamepad_only_black);
     json_object_set_string_member(root, "audio_monitor", s->audio_monitor);
     json_object_set_int_member(root, "autostart_stream", s->autostart_stream);
+    json_object_set_int_member(root, "ui_theme", s->ui_theme);
 
     JsonObject *src = json_object_new();
     json_object_set_string_member(src, "output", s->source.output);

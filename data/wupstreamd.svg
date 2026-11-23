@@ -1,37 +1,46 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
-  <defs>
-    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#1c2b4a"/>
-      <stop offset="1" stop-color="#0d1420"/>
-    </linearGradient>
-    <linearGradient id="body" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#3d4f6f"/>
-      <stop offset="1" stop-color="#26334a"/>
-    </linearGradient>
-  </defs>
-  <rect x="4" y="4" width="120" height="120" rx="26" fill="url(#bg)"/>
-  <!-- signal waves -->
-  <g fill="none" stroke="#5ec8ff" stroke-width="5" stroke-linecap="round">
-    <path d="M96 44 a14 14 0 0 1 0 20" opacity=".45"/>
-    <path d="M102 36 a24 24 0 0 1 0 36" opacity=".7"/>
-    <path d="M108 28 a34 34 0 0 1 0 52" opacity=".95"/>
-  </g>
-  <circle cx="93" cy="54" r="4" fill="#5ec8ff"/>
-  <!-- gamepad body -->
-  <path d="M34 52 h60 a10 10 0 0 1 10 10 v8 a10 10 0 0 1 -10 10 h-8 l-4 10 a6 6 0 0 1 -11 1 l-7 -11 h-14 l-7 11 a6 6 0 0 1 -11 -1 l-4 -10 h-8 a10 10 0 0 1 -10 -10 v-8 a10 10 0 0 1 10 -10 z" fill="url(#body)"/>
-  <!-- dpad -->
-  <g fill="#dfe8f5">
-    <rect x="40" y="62" width="6" height="18" rx="2"/>
-    <rect x="34" y="68" width="18" height="6" rx="2"/>
-  </g>
-  <!-- face buttons -->
-  <g>
-    <circle cx="86" cy="60" r="4" fill="#e5484d"/>
-    <circle cx="94" cy="68" r="4" fill="#46a758"/>
-    <circle cx="78" cy="68" r="4" fill="#3e8ef7"/>
-    <circle cx="86" cy="76" r="4" fill="#f5c542"/>
-  </g>
-  <!-- sticks -->
-  <circle cx="52" cy="80" r="7" fill="#141c2c" stroke="#8fa3c0" stroke-width="2"/>
-  <circle cx="102" cy="80" r="7" fill="#141c2c" stroke="#8fa3c0" stroke-width="2"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="WUP Stream Wii U GamePad over Wi-Fi">
+<defs>
+  <linearGradient id="back" x1=".1" y1="0" x2=".9" y2="1" gradientUnits="objectBoundingBox">
+    <stop offset="0" stop-color="#27333d"/><stop offset="1" stop-color="#111920"/>
+  </linearGradient>
+  <linearGradient id="case" x1="0" y1="0" x2="0" y2="1">
+    <stop offset="0" stop-color="#435463"/><stop offset="1" stop-color="#202d39"/>
+  </linearGradient>
+  <linearGradient id="screen" x1="0" y1="0" x2="1" y2="1">
+    <stop offset="0" stop-color="#60dcfa"/><stop offset="1" stop-color="#1e6cd2"/>
+  </linearGradient>
+  <filter id="glow" x="-.5" y="-.5" width="2" height="2"><feGaussianBlur stdDeviation="2"/></filter>
+</defs>
+<rect x="3" y="3" width="122" height="122" rx="28" fill="url(#back)" stroke="#5d737f" stroke-opacity=".6" stroke-width="2"/>
+<path d="M19 91c6 8 18 13 43 13h10c25 0 37-5 43-13" fill="none" stroke="#6fcbe3" opacity=".13" stroke-width="3"/>
+<!-- discreet radio signal above the console -->
+<g fill="none" stroke="#63d8ed" stroke-width="4" stroke-linecap="round">
+  <path d="M55 24q9-9 18 0" opacity=".95"/>
+  <path d="M49 18q15-15 30 0" opacity=".65"/>
+  <path d="M43 12q21-21 42 0" opacity=".35"/>
+</g>
+<circle cx="64" cy="29" r="3.5" fill="#63d8ed"/>
+<!-- shoulder ridge -->
+<rect x="17" y="43" width="94" height="14" rx="7" fill="#17222d" stroke="#526677" stroke-width="1.5"/>
+<!-- Wii U GamePad silhouette, horizontal touchscreen in center -->
+<rect x="12" y="48" width="104" height="60" rx="20" fill="#070c11" opacity=".6" transform="translate(0 3)"/>
+<rect x="12" y="46" width="104" height="60" rx="20" fill="url(#case)" stroke="#9bb2bf" stroke-width="1.5"/>
+<rect x="38" y="53" width="52" height="42" rx="5" fill="#101b27" stroke="#839aaa" stroke-width="2"/>
+<rect x="42" y="57" width="44" height="34" rx="2" fill="url(#screen)"/>
+<!-- screen transfer pictogram -->
+<path d="M48 81h23m-8-7 8 7-8 7" fill="none" stroke="#e4fbff" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"/>
+<circle cx="64" cy="51" r="1.5" fill="#67a9cb"/>
+<!-- both thumbsticks up high -->
+<circle cx="27" cy="62" r="9" fill="#0e1923" stroke="#8da4b3" stroke-width="2"/>
+<circle cx="27" cy="62" r="4" fill="#64cce8"/>
+<circle cx="101" cy="62" r="9" fill="#0e1923" stroke="#8da4b3" stroke-width="2"/>
+<circle cx="101" cy="62" r="4" fill="#64cce8"/>
+<!-- dpad -->
+<path d="M24 80h6v6h6v6h-6v6h-6v-6h-6v-6h6z" fill="#d6e3ed"/>
+<!-- face buttons -->
+<circle cx="100" cy="80" r="3.3" fill="#f5d17a"/>
+<circle cx="93" cy="87" r="3.3" fill="#8fd4f4"/>
+<circle cx="107" cy="87" r="3.3" fill="#8ce0b9"/>
+<circle cx="100" cy="94" r="3.3" fill="#f28caa"/>
+<circle cx="64" cy="100" r="2.7" fill="#70a7c3"/>
 </svg>

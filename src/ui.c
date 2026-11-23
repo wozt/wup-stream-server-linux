@@ -35,6 +35,8 @@ struct ui_t {
     GtkWidget *viz_area, *black_chk;
     GtkWidget *row1, *row2, *input_cols; /* adaptive layout */
     int stream_icon_mode; /* update button icon only on state changes */
+    GtkCssProvider *theme_css;
+    GtkWidget *theme_buttons[5];
     /* audio */
     GtkWidget *aout_chk, *ain_chk, *monitor_combo;
     /* pad */
@@ -59,6 +61,152 @@ static void schedule_save(ui_t *u) {
 static void commit_capture(ui_t *u) { schedule_save(u); server_restart_capture(u->srv); }
 static void commit_reconnect(ui_t *u) { schedule_save(u); server_request_reconnect(u->srv); }
 static void commit_live(ui_t *u) { schedule_save(u); }
+
+/* WUP_V4_THEME_SWITCHER: live, scoped GTK3 palettes; no global OS theme change. */
+typedef struct {
+    const char *name, *background, *panel, *entry, *border;
+    const char *text, *muted, *accent, *button, *hover, *active;
+} wup_theme_palette_t;
+
+static const wup_theme_palette_t wup_palettes[5] = {
+    /* true neutral charcoal: no blue cast */
+    {"Graphite", "#222224", "#2c2c2f", "#1b1b1d", "#505053",
+     "#eeeeef", "#b5b5b8", "#e4e4e7", "#38383c", "#46464a", "#59595e"},
+    {"Light", "#f0f1f3", "#ffffff", "#f8f9fb", "#c5ccd4",
+     "#20252d", "#586575", "#2463a6", "#e7ebf0", "#d9e1ea", "#b8d7f5"},
+    /* original blue-grey V3, refined */
+    {"Ocean", "#111923", "#192532", "#0f1b27", "#35485b",
+     "#dce7f1", "#9fb5c8", "#96cdf9", "#253547", "#334c66", "#285277"},
+    {"Emerald", "#101b17", "#172a22", "#0b1c17", "#315e4b",
+     "#e0f3e9", "#a3c6b4", "#65ddb0", "#244537", "#315d49", "#226a4b"},
+    {"Rose", "#21161e", "#30202c", "#1b1119", "#69465d",
+     "#f6e5ed", "#cfacc0", "#ffa3d0", "#4b3043", "#65405b", "#823f68"}
+};
+
+static void wup_apply_theme(ui_t *u) {
+    if (!u || !u->theme_css) return;
+    int index = u->s->ui_theme;
+    if (index < 0 || index >= 5) index = 2;
+    const wup_theme_palette_t *p = &wup_palettes[index];
+    GString *css = g_string_new(NULL);
+    g_string_append_printf(css,
+        "window.wup-settings { background-color: %s; color: %s; }"
+        ".wup-settings { color: %s; }"
+        ".wup-settings * { font-size: 11px; }",
+        p->background, p->text, p->text);
+    g_string_append_printf(css,
+        ".wup-settings frame { background-color: %s; border: 1px solid %s; "
+        "border-radius: 8px; margin: 1px; padding: 2px; }"
+        ".wup-settings .wup-section-title { color: %s; font-weight: bold; "
+        "padding: 0px 3px 0px 0px; }"
+        ".wup-settings label { color: %s; padding: 0px; }"
+        ".wup-settings label:disabled { color: %s; }",
+        p->panel, p->border, p->accent, p->text, p->muted);
+    g_string_append_printf(css,
+        ".wup-settings button { min-height: 17px; padding: 1px 6px; "
+        "border: 1px solid %s; border-radius: 5px; "
+        "background-image: none; background-color: %s; color: %s; }"
+        ".wup-settings button:hover { background-color: %s; border-color: %s; }"
+        ".wup-settings button:active, .wup-settings button:checked { background-color: %s; }"
+        ".wup-settings button:disabled { color: %s; }"
+        ".wup-settings .wup-icon-button { min-width: 20px; padding: 1px 3px; }",
+        p->border, p->button, p->text, p->hover, p->accent, p->active, p->muted);
+    g_string_append_printf(css,
+        ".wup-settings entry { min-height: 17px; padding: 1px 4px; "
+        "background-color: %s; color: %s; border-radius: 4px; "
+        "border: 1px solid %s; }"
+        ".wup-settings entry:focus { border-color: %s; }"
+        ".wup-settings entry selection { background-color: %s; color: %s; }",
+        p->entry, p->text, p->border, p->accent, p->active, p->text);
+    g_string_append_printf(css,
+        ".wup-settings spinbutton { min-height: 17px; padding: 0px; }"
+        ".wup-settings spinbutton entry { min-height: 17px; padding: 1px 3px; }"
+        ".wup-settings spinbutton button { min-width: 14px; min-height: 17px; padding: 0px 1px; }"
+        ".wup-settings combobox { min-height: 17px; padding: 0px; }"
+        ".wup-settings combobox button { min-height: 17px; padding: 0px 4px; }"
+        ".wup-settings checkbutton { min-height: 17px; padding: 0px; }"
+        ".wup-settings checkbutton check { min-width: 14px; min-height: 14px; "
+        "border-radius: 3px; background-color: %s; border: 1px solid %s; color: %s; }"
+        ".wup-settings checkbutton check:checked { background-color: %s; color: %s; }"
+        ".wup-settings scrolledwindow { background-color: transparent; }"
+        ".wup-settings image { color: %s; }",
+        p->entry, p->border, p->text, p->active, p->text, p->text);
+
+    /* Each of the five 23px buttons is a color-coded theme preview. */
+    static const char *classes[5] = {"graphite", "light", "ocean", "emerald", "rose"};
+    static const char *swatches[5] = {"#38383c", "#f0f1f3", "#247ab6", "#287b57", "#ad5286"};
+    static const char *ink[5] = {"#f4f4f6", "#242b34", "#f4fcff", "#f0fff6", "#fff0f8"};
+    for (int i = 0; i < 5; i++) {
+        g_string_append_printf(css,
+            ".wup-settings button.wup-theme-%s { min-width: 22px; min-height: 22px; "
+            "padding: 1px; border-radius: 6px; background-image: none; "
+            "background-color: %s; color: %s; border: 1px solid %s; }"
+            ".wup-settings button.wup-theme-%s image { color: %s; }"
+            ".wup-settings button.wup-theme-%s:checked { border: 2px solid %s; "
+            "box-shadow: 0 0 0 1px %s; }",
+            classes[i], swatches[i], ink[i], p->border,
+            classes[i], ink[i], classes[i], p->accent, p->accent);
+    }
+    GError *error = NULL;
+    gtk_css_provider_load_from_data(u->theme_css, css->str, -1, &error);
+    if (error) {
+        g_warning("WUP theme CSS: %s", error->message);
+        g_error_free(error);
+    }
+    g_string_free(css, TRUE);
+}
+
+static void wup_theme_toggled(GtkToggleButton *btn, ui_t *u) {
+    int selected = GPOINTER_TO_INT(g_object_get_data(G_OBJECT(btn), "wup-theme-index"));
+    if (selected < 0 || selected >= 5) return;
+    if (!gtk_toggle_button_get_active(btn)) {
+        /* Re-clicking the selected button must not leave no theme selected. */
+        if (selected == u->s->ui_theme)
+            gtk_toggle_button_set_active(btn, TRUE);
+        return;
+    }
+    gboolean changed = u->s->ui_theme != selected;
+    /* Change state first, so deselection signals cannot reactivate old buttons. */
+    u->s->ui_theme = selected;
+    for (int i = 0; i < 5; i++) {
+        if (i != selected && u->theme_buttons[i])
+            gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(u->theme_buttons[i]), FALSE);
+    }
+    if (changed) {
+        wup_apply_theme(u);  /* synchronous: no restart, no stream interruption */
+        schedule_save(u);
+    }
+}
+
+static GtkWidget *wup_theme_bar(ui_t *u) {
+    static const char *names[] = {"Graphite (neutral grey)", "Light", "Ocean blue",
+                                  "Emerald green", "Rose pink"};
+    static const char *icons[] = {"weather-clear-night-symbolic", "weather-clear-symbolic",
+                                  "preferences-desktop-theme-symbolic", "emblem-default-symbolic",
+                                  "emblem-favorite-symbolic"};
+    static const char *fallback[] = {"D", "L", "B", "G", "P"};
+    static const char *classes[] = {"wup-theme-graphite", "wup-theme-light",
+                                    "wup-theme-ocean", "wup-theme-emerald", "wup-theme-rose"};
+    GtkWidget *bar = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 3);
+    GtkIconTheme *theme = gtk_icon_theme_get_default();
+    for (int i = 0; i < 5; i++) {
+        GtkWidget *b = gtk_toggle_button_new();
+        GtkWidget *content = gtk_icon_theme_has_icon(theme, icons[i])
+            ? gtk_image_new_from_icon_name(icons[i], GTK_ICON_SIZE_MENU)
+            : gtk_label_new(fallback[i]);
+        gtk_container_add(GTK_CONTAINER(b), content);
+        gtk_widget_set_tooltip_text(b, names[i]);
+        gtk_widget_set_size_request(b, 23, 23);
+        gtk_style_context_add_class(gtk_widget_get_style_context(b), "wup-theme-button");
+        gtk_style_context_add_class(gtk_widget_get_style_context(b), classes[i]);
+        g_object_set_data(G_OBJECT(b), "wup-theme-index", GINT_TO_POINTER(i));
+        gtk_box_pack_start(GTK_BOX(bar), b, FALSE, FALSE, 0);
+        u->theme_buttons[i] = b;
+        gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(b), i == u->s->ui_theme);
+        g_signal_connect(b, "toggled", G_CALLBACK(wup_theme_toggled), u);
+    }
+    return bar;
+}
 
 static GtkWidget *mk_label(const char *t) {
     GtkWidget *l = gtk_label_new(t);
@@ -1037,23 +1185,37 @@ static void on_tray_popup(GtkStatusIcon *icon, guint button, guint time, gpointe
                    gtk_status_icon_position_menu, icon, button, time);
 }
 
+/* WUP_V4_THEME_SWITCHER: resolve icon on developer builds AND installed builds.
+ * Never stop at a NULL environment variable (the V3 loader's original bug). */
 static GdkPixbuf *load_icon(void) {
+    char *exe = g_file_read_link("/proc/self/exe", NULL);
+    char *bindir = exe ? g_path_get_dirname(exe) : NULL;
+    char *local_png = bindir ? g_build_filename(bindir, "..", "data", "wupstreamd.png", NULL) : NULL;
+    char *local_svg = bindir ? g_build_filename(bindir, "..", "data", "wupstreamd.svg", NULL) : NULL;
     const char *paths[] = {
         getenv("WUPSTREAMD_ICON"),
+        local_png, local_svg,
+        "data/wupstreamd.png", "data/wupstreamd.svg",
+        "/usr/share/icons/hicolor/256x256/apps/wupstreamd.png",
+        "/usr/local/share/icons/hicolor/256x256/apps/wupstreamd.png",
         "/usr/share/icons/hicolor/scalable/apps/wupstreamd.svg",
-        "/usr/share/pixmaps/wupstreamd.svg",
+        "/usr/local/share/icons/hicolor/scalable/apps/wupstreamd.svg",
         "/usr/share/pixmaps/wupstreamd.png",
-        "/usr/share/pixmaps/wupstreamd.svg",
-        "/usr/share/pixmaps/wupstreamd.png",
-        NULL
+        "/usr/share/pixmaps/wupstreamd.svg"
     };
-    for (int i = 0; paths[i]; i++) {
-        GError *e = NULL;
-        GdkPixbuf *pb = gdk_pixbuf_new_from_file(paths[i], &e);
-        if (pb) return pb;
-        if (e) g_error_free(e);
+    GdkPixbuf *pb = NULL;
+    for (guint i = 0; i < G_N_ELEMENTS(paths); i++) {
+        if (!paths[i] || !paths[i][0]) continue;
+        GError *error = NULL;
+        pb = gdk_pixbuf_new_from_file(paths[i], &error);
+        if (pb) break;
+        if (error) g_error_free(error);
     }
-    return NULL;
+    g_free(local_png);
+    g_free(local_svg);
+    g_free(bindir);
+    g_free(exe);
+    return pb;
 }
 
 static gboolean status_tick(gpointer p) {
@@ -1100,9 +1262,13 @@ ui_t *ui_new(settings_t *s, server_t *srv) {
     gtk_window_set_title(GTK_WINDOW(u->window), "wupstreamd — settings");
     {
         GdkPixbuf *ic = load_icon();
-        if (ic) { gtk_window_set_icon(GTK_WINDOW(u->window), ic); }
+        if (ic) {
+            gtk_window_set_icon(GTK_WINDOW(u->window), ic);
+            gtk_window_set_default_icon(ic);
+            g_object_unref(ic);
+        }
     }
-    gtk_window_set_default_size(GTK_WINDOW(u->window), 960, 745);
+    gtk_window_set_default_size(GTK_WINDOW(u->window), 960, 680);
     g_signal_connect(u->window, "delete-event", G_CALLBACK(gtk_widget_hide_on_delete), NULL);
     gtk_widget_set_size_request(u->window, 680, 530);
 
@@ -1122,48 +1288,23 @@ ui_t *ui_new(settings_t *s, server_t *srv) {
     gtk_label_set_ellipsize(GTK_LABEL(u->status_lbl), PANGO_ELLIPSIZE_END);
     gtk_label_set_max_width_chars(GTK_LABEL(u->status_lbl), 65);
     gtk_label_set_xalign(GTK_LABEL(u->status_lbl), 0);
-    gtk_box_pack_start(GTK_BOX(top), u->status_lbl, TRUE, TRUE, 0);
+    gtk_box_pack_start(GTK_BOX(top), u->status_lbl, FALSE, FALSE, 0);
     gtk_widget_set_tooltip_text(u->status_lbl, "Current stream connection status");
+    GtkWidget *themes = wup_theme_bar(u);  /* five live theme buttons, beside status */
+    gtk_box_pack_start(GTK_BOX(top), themes, FALSE, FALSE, 6);
+    GtkWidget *top_spacer = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
+    gtk_box_pack_start(GTK_BOX(top), top_spacer, TRUE, TRUE, 0);
     u->stream_btn = gtk_button_new_with_label("Start stream");
     button_symbol(u->stream_btn, "media-playback-start-symbolic");
     g_signal_connect(u->stream_btn, "clicked", G_CALLBACK(on_stream_clicked), u);
     gtk_box_pack_start(GTK_BOX(top), u->stream_btn, FALSE, FALSE, 0);
 
-    /* WUP_V3_MODERN_DENSE_UI: scoped dark UI, short controls, legible contrast. */
-    GtkCssProvider *css = gtk_css_provider_new();
-    gtk_css_provider_load_from_data(css,
-        "window.wup-settings { background-color: #111923; color: #dce7f1; }"
-        ".wup-settings * { font-size: 11px; }"
-        ".wup-settings frame { background-color: #192532; "
-        "  border: 1px solid #35485b; border-radius: 8px; margin: 1px; padding: 2px; }"
-        ".wup-settings .wup-section-title { color: #96cdf9; font-weight: bold; "
-        "  padding: 0px 3px 0px 0px; }"
-        ".wup-settings label { padding: 0px; }"
-        ".wup-settings button { min-height: 17px; padding: 1px 6px; "
-        "  border: 1px solid #41576e; border-radius: 5px; "
-        "  background-image: none; background-color: #253547; color: #e7f1fa; }"
-        ".wup-settings button:hover { background-color: #334c66; border-color: #62a6da; }"
-        ".wup-settings button:active { background-color: #285277; }"
-        ".wup-settings button:disabled { color: #81919f; }"
-        ".wup-settings .wup-icon-button { min-width: 20px; padding: 1px 3px; }"
-        ".wup-settings entry { min-height: 17px; padding: 1px 4px; "
-        "  background-color: #0f1b27; color: #e4f0f9; border-radius: 4px; "
-        "  border: 1px solid #3a4c5d; }"
-        ".wup-settings entry:focus { border-color: #4a9ad5; }"
-        ".wup-settings spinbutton { min-height: 17px; padding: 0px; }"
-        ".wup-settings spinbutton entry { min-height: 17px; padding: 1px 3px; }"
-        ".wup-settings spinbutton button { min-width: 14px; min-height: 17px; "
-        "  padding: 0px 1px; }"
-        ".wup-settings combobox { min-height: 17px; padding: 0px; }"
-        ".wup-settings combobox button { min-height: 17px; padding: 0px 4px; }"
-        ".wup-settings checkbutton { min-height: 17px; padding: 0px; }"
-        ".wup-settings checkbutton check { min-width: 14px; min-height: 14px; }"
-        ".wup-settings scrolledwindow { background-color: transparent; }"
-        , -1, NULL);
+    /* One scoped provider is updated in place when the theme changes. */
+    u->theme_css = gtk_css_provider_new();
     gtk_style_context_add_provider_for_screen(
-        gdk_screen_get_default(), GTK_STYLE_PROVIDER(css),
-        GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
-    g_object_unref(css);
+        gdk_screen_get_default(), GTK_STYLE_PROVIDER(u->theme_css),
+        GTK_STYLE_PROVIDER_PRIORITY_APPLICATION + 1);
+    wup_apply_theme(u);
 
     /* paired sections so columns stay balanced */
     GtkWidget *row1 = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
@@ -1208,5 +1349,12 @@ ui_t *ui_new(settings_t *s, server_t *srv) {
 void ui_free(ui_t *u) {
     if (!u) return;
     if (u->save_id) g_source_remove(u->save_id);
+    if (u->theme_css) {
+        GdkScreen *screen = gdk_screen_get_default();
+        if (screen)
+            gtk_style_context_remove_provider_for_screen(
+                screen, GTK_STYLE_PROVIDER(u->theme_css));
+        g_object_unref(u->theme_css);
+    }
     free(u);
 }

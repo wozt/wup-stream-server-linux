@@ -40,3 +40,5 @@ executable('wupstreamd',
 
 install_data('data/wupstreamd.desktop', install_dir: get_option('datadir') / 'applications')
 install_data('data/wupstreamd.svg', install_dir: get_option('datadir') / 'icons' / 'hicolor' / 'scalable' / 'apps')
+# WUP_V4_THEME_SWITCHER: raster fallback, 256px taskbar/launcher icon
+install_data('data/wupstreamd.png', install_dir: get_option('datadir') / 'icons' / 'hicolor' / '256x256' / 'apps')
