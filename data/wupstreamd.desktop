@@ -4,5 +4,6 @@ Name=wupstreamd
 Comment=Stream your screen to a Wii U GamePad
 Exec=wupstreamd
 Icon=wupstreamd
+StartupWMClass=wupstreamd
 Terminal=false
 Categories=AudioVideo;Network;

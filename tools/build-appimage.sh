@@ -47,6 +47,8 @@ for icon in btn_a.svg btn_tv.svg; do
 done
 printf "Bundled %d themes and %d language files into AppDir\n" "${#theme_files[@]}" "${#language_files[@]}"
 
+chmod -R a+rX "$APPDIR"
+
 # linuxdeploy collects non-system runtime dependencies of the binary.
 # Use no GTK plugin by default: the GTK plugin can be supplied via env when installed.
 export OUTPUT="${OUTPUT:-$OUT/wupstreamd-x86_64.AppImage}"
@@ -56,3 +58,4 @@ export OUTPUT="${OUTPUT:-$OUT/wupstreamd-x86_64.AppImage}"
    --icon-file "$APPDIR/usr/share/icons/hicolor/256x256/apps/wupstreamd.png" \
    --output appimage
 printf '\nCreated: %s\n' "$OUTPUT"
+

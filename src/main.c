@@ -28,6 +28,7 @@ static void ensure_autostart(void) {
         "Comment=Stream your screen to a Wii U GamePad\n"
         "Exec=%s\n"
         "Icon=wupstreamd\n"
+        "StartupWMClass=wupstreamd\n"
         "Terminal=false\n"
         "X-GNOME-Autostart-enabled=true\n", exe);
     g_file_set_contents(path, content, -1, NULL);
@@ -48,7 +49,11 @@ static int acquire_instance_lock(void) {
 }
 
 int main(int argc, char **argv) {
+    /* WUP_V915_TASKBAR_ICON: stable X11 WM_CLASS/desktop identity.
+     * Use the .desktop filename stem, not the window title or argv[0]. */
+    g_set_prgname("wupstreamd");
     gtk_init(&argc, &argv);
+    gdk_set_program_class("wupstreamd");
 
     int lockfd = acquire_instance_lock();
     if (lockfd < 0) {

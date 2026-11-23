@@ -1904,6 +1904,39 @@ static GdkPixbuf *load_icon(void) {
     return pb;
 }
 
+/* WUP_V915_TASKBAR_ICON: icon of the main toplevel / taskbar entry.
+ * This intentionally does NOT touch the GtkStatusIcon notification-area code.
+ * GTK3 exports the icon list as _NET_WM_ICON on X11. */
+static void wup_install_window_icons(GtkWindow *window) {
+    GdkPixbuf *source = load_icon();
+    if (!source) {
+        g_warning("Taskbar icon: cannot find data/wupstreamd.png or bundled icon");
+        return;
+    }
+
+    static const int sizes[] = {16, 24, 32, 48, 64, 128, 256};
+    GList *icons = NULL;
+    for (guint i = 0; i < G_N_ELEMENTS(sizes); ++i) {
+        const int size = sizes[i];
+        GdkPixbuf *pixbuf =
+            gdk_pixbuf_get_width(source) == size &&
+            gdk_pixbuf_get_height(source) == size
+                ? g_object_ref(source)
+                : gdk_pixbuf_scale_simple(source, size, size, GDK_INTERP_BILINEAR);
+        if (pixbuf) icons = g_list_prepend(icons, pixbuf);
+    }
+    if (icons) {
+        icons = g_list_reverse(icons);
+        gtk_window_set_icon_list(window, icons);
+        gtk_window_set_default_icon_list(icons);
+        g_list_free_full(icons, (GDestroyNotify)g_object_unref);
+    } else {
+        gtk_window_set_icon(window, source);
+        gtk_window_set_default_icon(source);
+    }
+    g_object_unref(source);
+}
+
 /* WUP_V6_JSON_LANGUAGES: the native titlebar is replaced with three GTK controls.
  * The product badge is the draggable region; a double click toggles maximize.
  * Close keeps the existing tray/hidden-window behavior. */
@@ -2151,20 +2184,16 @@ ui_t *ui_new(settings_t *s, server_t *srv) {
               sizeof(s->language_id));
 
     u->window = gtk_window_new(GTK_WINDOW_TOPLEVEL);
+    /* Must be set before the window is realized: X11 WM_CLASS matches
+     * StartupWMClass=wupstreamd in data/wupstreamd.desktop. */
+    gtk_window_set_wmclass(GTK_WINDOW(u->window), "wupstreamd", "wupstreamd");
     gtk_window_set_decorated(GTK_WINDOW(u->window), FALSE);
     gtk_window_set_resizable(GTK_WINDOW(u->window),TRUE);
     gtk_style_context_add_class(gtk_widget_get_style_context(u->window),
                                 "wup-settings");
     u->stream_icon_mode = -1;
     gtk_window_set_title(GTK_WINDOW(u->window), "WUP Stream — Settings");
-    {
-        GdkPixbuf *ic = load_icon();
-        if (ic) {
-            gtk_window_set_icon(GTK_WINDOW(u->window), ic);
-            gtk_window_set_default_icon(ic);
-            g_object_unref(ic);
-        }
-    }
+    wup_install_window_icons(GTK_WINDOW(u->window));
     gtk_window_set_default_size(GTK_WINDOW(u->window), 960, 703);
     g_signal_connect(u->window, "delete-event", G_CALLBACK(gtk_widget_hide_on_delete), NULL);
     gtk_widget_set_size_request(u->window, 680, 530);
