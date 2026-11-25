@@ -17,14 +17,14 @@ jobs:
     timeout-minutes: 60
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Install compiler, GTK and packaging prerequisites
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             build-essential pkg-config git python3 meson ninja-build nasm make \
-            curl ca-certificates libfuse2 xvfb xdotool \
+            curl ca-certificates libfuse2 xvfb xdotool openbox \
             libgtk-3-dev libpango1.0-dev libx11-dev libxrandr-dev \
             libxtst-dev libxext-dev libxcb1-dev libxcb-shm0-dev \
             libx11-xcb-dev libpulse-dev libcairo2-dev libxinerama-dev \
@@ -67,7 +67,7 @@ jobs:
             bash tools/test-ui-startup.sh "$PWD/dist/wupstreamd-x86_64.AppImage"
 
       - name: Upload tested AppImage
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: wupstreamd-linux-x86_64
           path: dist/wupstreamd-x86_64.AppImage
@@ -84,12 +84,12 @@ jobs:
       contents: write
     steps:
       - name: Checkout with tags for version calculation
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
       - name: Download tested AppImage
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         with:
           name: wupstreamd-linux-x86_64
           path: dist

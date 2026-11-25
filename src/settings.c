@@ -297,7 +297,10 @@ void settings_save(settings_t *s) {
     JsonGenerator *g = json_generator_new();
     JsonNode *root_node = json_node_new(JSON_NODE_OBJECT);
     json_node_take_object(root_node, root);
-    json_generator_take_root(g, root_node);
+    /* JSON-GLib 1.6 (Ubuntu 22.04) does not have take_root().
+     * set_root() copies the node; free the original afterward. */
+    json_generator_set_root(g, root_node);
+    json_node_free(root_node);
     char *out = json_generator_to_data(g, NULL);
     g_file_set_contents(settings_path(), out, -1, NULL);
     g_free(out);

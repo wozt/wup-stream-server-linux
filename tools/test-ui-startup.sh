@@ -15,6 +15,10 @@ cleanup() {
     kill -TERM "$pid" 2>/dev/null || true
     wait "$pid" 2>/dev/null || true
   fi
+  if [[ -n "${wm_pid:-}" ]]; then
+    kill -TERM "$wm_pid" 2>/dev/null || true
+    wait "$wm_pid" 2>/dev/null || true
+  fi
   if [[ "${KEEP_SMOKE_LOG:-0}" == "1" ]]; then
     echo "Smoke-test logs: $tmp" >&2
   else
@@ -28,6 +32,17 @@ export HOME="$tmp/home"
 export XDG_CONFIG_HOME="$HOME/.config"
 mkdir -p "$HOME"
 export APPIMAGE_EXTRACT_AND_RUN="${APPIMAGE_EXTRACT_AND_RUN:-1}"
+
+# A lightweight window manager makes WM_DELETE_WINDOW reliable on Xvfb.
+# Without one, xdotool windowclose can bypass close-to-tray semantics.
+openbox --sm-disable >"$tmp/openbox.log" 2>&1 &
+wm_pid="$!"
+sleep 0.5
+if ! kill -0 "$wm_pid" 2>/dev/null; then
+  cat "$tmp/openbox.log" >&2
+  echo "Openbox could not start for the X11 smoke test" >&2
+  exit 1
+fi
 
 "$APP" >"$tmp/wupstreamd.log" 2>&1 &
 pid="$!"
