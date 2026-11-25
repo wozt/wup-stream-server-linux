@@ -1,0 +1,101 @@
+name: Linux AppImage CI/CD
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build and smoke-test x86_64 AppImage
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install compiler, GTK and packaging prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential pkg-config git python3 meson ninja-build nasm make \
+            curl ca-certificates libfuse2 xvfb xdotool \
+            libgtk-3-dev libpango1.0-dev libx11-dev libxrandr-dev \
+            libxtst-dev libxext-dev libxcb1-dev libxcb-shm0-dev \
+            libx11-xcb-dev libpulse-dev libcairo2-dev libxinerama-dev \
+            libjson-glib-dev libswscale-dev
+
+      - name: Validate scripts and version allocator
+        run: |
+          bash -n tools/build.sh tools/build-appimage.sh tools/test-ui-startup.sh
+          python3 -m py_compile tools/build_wupstream_dep.py tools/publish_release.py
+          python3 -m unittest discover -s tests -p 'test_*.py' -v
+
+      - name: Build wupstreamd and pinned libwupstream
+        run: bash tools/build.sh
+
+      - name: Download official linuxdeploy
+        run: |
+          mkdir -p "$RUNNER_TEMP/linuxdeploy"
+          curl --fail --location --retry 4 --retry-delay 2 \
+            --output "$RUNNER_TEMP/linuxdeploy/linuxdeploy-x86_64.AppImage" \
+            https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage
+          chmod +x "$RUNNER_TEMP/linuxdeploy/linuxdeploy-x86_64.AppImage"
+          file "$RUNNER_TEMP/linuxdeploy/linuxdeploy-x86_64.AppImage"
+
+      - name: Build AppImage (including themes, translations and icons)
+        env:
+          APPIMAGE_EXTRACT_AND_RUN: "1"
+          LINUXDEPLOY: ${{ runner.temp }}/linuxdeploy/linuxdeploy-x86_64.AppImage
+          OUTPUT: ${{ github.workspace }}/dist/wupstreamd-x86_64.AppImage
+        run: |
+          bash tools/build-appimage.sh
+          test -s "$OUTPUT"
+          chmod +x "$OUTPUT"
+          file "$OUTPUT"
+
+      - name: Smoke-test AppImage UI and close-to-tray on virtual X11
+        env:
+          APPIMAGE_EXTRACT_AND_RUN: "1"
+        run: |
+          xvfb-run -a -s "-screen 0 1280x800x24" \
+            bash tools/test-ui-startup.sh "$PWD/dist/wupstreamd-x86_64.AppImage"
+
+      - name: Upload tested AppImage
+        uses: actions/upload-artifact@v4
+        with:
+          name: wupstreamd-linux-x86_64
+          path: dist/wupstreamd-x86_64.AppImage
+          if-no-files-found: error
+          retention-days: 14
+
+  release:
+    name: Publish next incremental GitHub Release
+    needs: build
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout with tags for version calculation
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download tested AppImage
+        uses: actions/download-artifact@v4
+        with:
+          name: wupstreamd-linux-x86_64
+          path: dist
+
+      - name: Allocate next version and publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 tools/publish_release.py dist/wupstreamd-x86_64.AppImage

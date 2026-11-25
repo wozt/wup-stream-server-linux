@@ -2296,6 +2296,12 @@ ui_t *ui_new(settings_t *s, server_t *srv) {
     g_timeout_add(500, status_tick, u);
     g_timeout_add(100, viz_tick, u);
 
+    /* WUP_START_VISIBLE: display the settings window on the FIRST launch.
+     * The titlebar X and WM_DELETE_WINDOW still hide it to the system tray.
+     * The tray icon can still present the window again afterwards.
+     */
+    gtk_widget_show_all(u->window);
+    gtk_window_present(GTK_WINDOW(u->window));
     return u;
 }
 

@@ -81,7 +81,9 @@ update that pin and rebuild; no generated binaries should be committed.
 
 1. On the GamePad: open **WUP Stream** in the Homebrew Menu ("Waiting for a
    Stream").
-2. Launch `wupstreamd` — the tray icon opens the settings window.
+2. Launch `wupstreamd` — its settings window opens immediately. The **X**
+   button hides it to the notification area without stopping the process;
+   click the tray icon to reopen it. Use **Quit** in the tray menu to exit.
 3. Pick a video source, quality preset and input mode, then **Start stream**.
 
 Settings live in `~/.config/wup-stream-serveur/settings.json`.
@@ -89,6 +91,31 @@ Autostart entry: `~/.config/autostart/wupstreamd.desktop`.
 
 Debug: `WUPSTREAMD_DEBUG=1 ./build/wupstreamd` prints audio ring-buffer
 fill levels and capture stats to stderr.
+
+## GitHub Actions: automatic AppImage releases
+
+Every successful push to `main` runs the Linux x86_64 build, packages an
+AppImage, and tests the first-launch window and close-to-tray behavior on
+a virtual X11 display. Pull requests and manual workflow runs build/test
+but do not publish releases. Only tested AppImages are released.
+
+The first successful push creates **v1.0.0.0**, then **v1.0.0.1**,
+**v1.0.0.2**, and so on. Versions are allocated atomically from Git tags
+only **after** the build and tests pass. A rerun of the same commit reuses
+its existing version (and can restore missing assets); concurrent builds
+cannot claim the same tag. Each GitHub Release has the versioned AppImage,
+SHA256SUMS and automatically generated release notes.
+
+The workflow needs GitHub Actions enabled and permission to create
+tags/releases (`GITHUB_TOKEN` with `contents: write` in the release job).
+The full CI/CD configuration lives in
+`.github/workflows/release-appimage.yml`. It uses the pinned standalone
+`libwupstream` build already shipped by this repository, so it needs
+no checked-out `../wup-stream` directory.
+
+The first build downloads its pinned upstream code/x264 and linuxdeploy.
+For local AppImages, use `bash tools/build-appimage.sh` after setting
+`LINUXDEPLOY` to the path of the official linuxdeploy AppImage.
 
 ## License
 
