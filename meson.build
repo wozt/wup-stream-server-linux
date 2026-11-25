@@ -19,9 +19,15 @@ swscale = dependency('libswscale')
 threads = dependency('threads')
 m_dep = meson.get_compiler('c').find_library('m', required: true)
 
-# libwupstream is built by ../wup-stream/host/build.sh
-wup_lib = meson.project_source_root() / '../wup-stream/build/host/libwupstream.a'
-wup_inc = include_directories('../wup-stream/host')
+# WUP_SELF_CONTAINED_LIB: download the pinned sources and build the static
+# library within this project's Meson build/ directory (no sibling checkout).
+# Both the header and the archive come from this one custom target.
+wup_python = find_program('python3')
+wup_dep = custom_target('wupstream-embedded',
+  output: ['libwupstream.a', 'wupstream.h'],
+  command: [wup_python, files('tools/build_wupstream_dep.py'),
+            '@OUTPUT0@', '@OUTPUT1@'],
+  build_by_default: true)
 
 executable('wupstreamd',
   'src/main.c',
@@ -37,9 +43,10 @@ executable('wupstreamd',
   'src/ui.c',
   'src/viz.c',
   'src/i18n.c', # WUP_V6_JSON_LANGUAGES
-  include_directories: [include_directories('src'), wup_inc],
+  wup_dep[1], # generated wupstream.h (orders C compilation after fetch)
+  include_directories: [include_directories('src')],
   dependencies: [gtkdep, pangocairo, x11, xrandr, xtst, xext, xinerama, json_glib, threads, m_dep, swscale, xcb, xcbshm, x11xcb, pulse, cairo],
-  link_args: [wup_lib],
+  link_with: wup_dep[0], # generated libwupstream.a
   install: true)
 
 install_data('data/wupstreamd.desktop', install_dir: get_option('datadir') / 'applications')

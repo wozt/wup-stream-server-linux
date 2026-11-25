@@ -500,6 +500,12 @@ static void *server_thread(void *arg) {
 
         pthread_mutex_lock(&srv->mtx);
         memset(&srv->metrics, 0, sizeof srv->metrics);
+        /* WUP_FIX_DISCONNECT_RELEASES: invalidate the last input report.
+         * Otherwise the GTK visualization keeps HOME/B visually pressed
+         * after the GamePad leaves (also on stop/reconnect/link loss).
+         */
+        memset(&srv->last_in, 0, sizeof srv->last_in);
+        srv->has_in = 0;
         pthread_mutex_unlock(&srv->mtx);
         if (cap_async) { capture_async_free(cap_async); cap_async = NULL; }
         capture_stop(&cap);

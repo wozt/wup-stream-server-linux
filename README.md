@@ -48,17 +48,34 @@ PulseAudio audio, virtual gamepad or keyboard/mouse injection.
 
 ## Build
 
+The server builds **without any sibling checkout of `wup-stream`**. On the
+first compilation, Meson fetches a **pinned** revision of
+[`wozt/wup-stream`](https://github.com/wozt/wup-stream), then runs its original
+`host/build.sh` to fetch/patch x264 and compile the PC library. The downloaded
+sources, generated `libwupstream.a`, and generated `wupstream.h` all live in
+this project's `build/` directory, which is git-ignored. Rebuilds reuse them.
+
+Requirements: `meson`, `ninja`, `python3`, `git`, `make`, a C compiler, `ar`,
+and the system development libraries listed above. `nasm` is recommended for
+fast x264 encoding. An internet connection is required for the initial build.
+
 ```sh
 git clone https://github.com/wozt/wup-stream-server-linux
 cd wup-stream-server-linux
-# build libwupstream first: https://github.com/ravensclawx/wup-stream
-meson setup build
-meson compile -C build
+bash tools/build.sh
 ./build/wupstreamd
 ```
 
-`libwupstream.a` is expected at `../wup-stream/build/host/libwupstream.a`
-(adjust `meson.build` if your checkout lives elsewhere).
+The direct Meson commands work as well:
+
+```sh
+meson setup build
+meson compile -C build
+```
+
+The upstream revision is pinned in `tools/build_wupstream_dep.py`. The upstream
+build script separately pins x264. To change upstream version, deliberately
+update that pin and rebuild; no generated binaries should be committed.
 
 ## Usage
 

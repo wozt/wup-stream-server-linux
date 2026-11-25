@@ -1,0 +1,84 @@
+#!/usr/bin/env python3
+"""Build pinned WUP Stream (and patched x264) into Meson's build directory.
+
+Invoked by Meson: build_wupstream_dep.py OUT_LIB_A OUT_HEADER_H
+No sibling /home/.../wup-stream installation is used, or required.
+"""
+import os
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+
+UPSTREAM_URL = "https://github.com/wozt/wup-stream.git"
+UPSTREAM_COMMIT = "8609916410a2c7b0ef7f052e00d788538e2ca43e"
+
+
+def run(command, *, cwd=None):
+    print("+ " + " ".join(map(str, command)), flush=True)
+    env = os.environ.copy()
+    env["GIT_TERMINAL_PROMPT"] = "0"
+    subprocess.run([str(arg) for arg in command], cwd=cwd, env=env, check=True)
+
+
+def git_output(repo, *args):
+    return subprocess.check_output(
+        ["git", "-C", str(repo), *args], text=True, stderr=subprocess.DEVNULL
+    ).strip()
+
+
+def prepare_source(source):
+    source.parent.mkdir(parents=True, exist_ok=True)
+    if source.exists() and not (source / ".git").is_dir():
+        raise RuntimeError(f"Refusing to overwrite non-Git dependency cache: {source}")
+    if not source.exists():
+        source.mkdir()
+        run(["git", "init", "-q", source])
+    try:
+        current = git_output(source, "rev-parse", "HEAD")
+    except subprocess.CalledProcessError:
+        current = None
+    if current != UPSTREAM_COMMIT:
+        print(f"Fetching pinned wozt/wup-stream revision {UPSTREAM_COMMIT[:12]}",
+              flush=True)
+        run(["git", "-C", source, "fetch", "--depth", "1",
+             UPSTREAM_URL, UPSTREAM_COMMIT])
+        run(["git", "-C", source, "checkout", "--force", "--detach", "FETCH_HEAD"])
+    if git_output(source, "rev-parse", "HEAD") != UPSTREAM_COMMIT:
+        raise RuntimeError("Fetched upstream commit differs from the pin")
+    for filename in ("host/build.sh", "host/wupstream.h"):
+        if not (source / filename).is_file():
+            raise RuntimeError(f"Missing pinned upstream file: {filename}")
+
+
+def copy_atomic(src, target):
+    tmp = target.with_name(target.name + ".tmp")
+    shutil.copyfile(src, tmp)
+    os.replace(tmp, target)
+
+
+def main(argv):
+    if len(argv) != 3:
+        raise SystemExit("usage: build_wupstream_dep.py OUT_LIB_A OUT_HEADER_H")
+    out_lib, out_header = (Path(v).resolve() for v in argv[1:])
+    if out_lib.parent != out_header.parent:
+        raise SystemExit("Meson outputs must share the same build directory")
+    source = out_lib.parent / "_wupstream_source"
+    prepare_source(source)
+    # The upstream build script already pins x264 and applies the DRH patch.
+    run(["sh", "host/build.sh"], cwd=source)
+    archive = source / "build" / "host" / "libwupstream.a"
+    if not archive.is_file() or archive.stat().st_size == 0:
+        raise RuntimeError(f"Library not produced: {archive}")
+    copy_atomic(archive, out_lib)
+    copy_atomic(source / "host" / "wupstream.h", out_header)
+    print(f"Built libwupstream locally: {out_lib} ({out_lib.stat().st_size} bytes)",
+          flush=True)
+
+
+if __name__ == "__main__":
+    try:
+        main(sys.argv)
+    except (OSError, RuntimeError, subprocess.CalledProcessError) as exc:
+        print(f"ERROR: libwupstream compilation failed: {exc}", file=sys.stderr)
+        sys.exit(1)

@@ -453,8 +453,51 @@ void input_set_touch_map(input_ctx_t *ctx, int x, int y, int w, int h) {
     ctx->map_valid = (w > 0 && h > 0);
 }
 
+/* WUP_FIX_DISCONNECT_RELEASES: do not leave host inputs pressed if the
+ * GamePad quits with HOME+B held, loses Wi-Fi or the server is stopped.
+ * Releasing the last snapshot is essential: there may be no final "key up".
+ */
+static void input_release_held(input_ctx_t *ctx) {
+    if (ctx->uifd >= 0) {
+        /* uinput/evdev: send key-up and centered axes before destroying device. */
+        for (int i = 0; i < WBTN_COUNT; i++) {
+            if (ctx->prev_buttons & wbtn_bit[i])
+                uinput_emit(ctx, EV_KEY, wbtn_evkey[i], 0);
+        }
+        uinput_emit(ctx, EV_ABS, ABS_X, 0);
+        uinput_emit(ctx, EV_ABS, ABS_Y, 0);
+        uinput_emit(ctx, EV_ABS, ABS_RX, 0);
+        uinput_emit(ctx, EV_ABS, ABS_RY, 0);
+        uinput_syn(ctx);
+        /* Give consumers a chance to process the neutral report. */
+        g_usleep(10000);
+    } else if (ctx->dpy) {
+        /* Keyboard mapping: undo pressed chords, including stick directions. */
+        for (int i = 0; i < WBTN_COUNT; i++) {
+            if ((ctx->prev_buttons & wbtn_bit[i]) &&
+                btn_chord[i].key != NoSymbol)
+                chord_press(ctx, &btn_chord[i], 0);
+        }
+        for (int i = 0; i < 8; i++) {
+            if ((ctx->prev_stick_dirs & (1u << i)) &&
+                stick_chord[i].key != NoSymbol)
+                chord_press(ctx, &stick_chord[i], 0);
+        }
+    }
+    /* Touch-as-mouse works in both input modes. */
+    if (ctx->dpy && ctx->touch_gesture == 1)
+        xtest_button(ctx->dpy, 1, 0);  /* left drag */
+    else if (ctx->dpy && ctx->touch_gesture == 3)
+        xtest_button(ctx->dpy, 3, 0);  /* right-click hold */
+    ctx->prev_buttons = 0;
+    ctx->prev_stick_dirs = 0;
+    ctx->prev_lx = ctx->prev_ly = ctx->prev_rx = ctx->prev_ry = 0;
+    ctx->prev_touched = ctx->touch_gesture = 0;
+}
+
 void input_free(input_ctx_t *ctx) {
     if (!ctx) return;
+    input_release_held(ctx);
     if (ctx->uifd >= 0) {
         ioctl(ctx->uifd, UI_DEV_DESTROY);
         close(ctx->uifd);
