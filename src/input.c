@@ -30,7 +30,7 @@ static const uint32_t wbtn_bit[WBTN_COUNT] = {
 
 /* evdev codes per button index (gamepad mode) */
 static const uint16_t wbtn_evkey[WBTN_COUNT] = {
-    BTN_SOUTH, BTN_EAST, BTN_NORTH, BTN_WEST,          /* A B X Y (Nintendo layout) */
+    BTN_EAST, BTN_SOUTH, BTN_WEST, BTN_NORTH,          /* A B X Y: physical Nintendo positions */
     BTN_DPAD_LEFT, BTN_DPAD_RIGHT, BTN_DPAD_UP, BTN_DPAD_DOWN,
     BTN_TL2, BTN_TR2,                                   /* ZL ZR analog triggers -> digital */
     BTN_TL, BTN_TR,                                     /* L R shoulders */
