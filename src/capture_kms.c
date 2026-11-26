@@ -39,6 +39,7 @@ struct wup_kms {
     EGLContext context;
     EGLSurface surface;
     GLuint program, texture, fbo, color;
+    GLuint yuv_program, yuv_fbo, yuv_color;
     int render_fd;
     struct gbm_device *render_gbm;
     PFNEGLCREATEIMAGEKHRPROC create_image;
@@ -119,6 +120,52 @@ static GLuint shader(GLenum kind,const char *source) {
     if(!ok){ char log[512]={0}; glGetShaderInfoLog(s,sizeof log,NULL,log); fprintf(stderr,"KMS shader: %s\n",log); glDeleteShader(s); return 0; }
     return s;
 }
+/* Packed I420: 854*480*3/2 bytes = 427*360 RGBA pixels.
+ * The first pass preserves the existing BGRA scaling and letterbox exactly.
+ * The second pass reproduces libwupstream's integer BT.601 conversion.
+ * Fragment highp is required for exact linear byte indices. */
+int wup_kms_i420_enabled(void) {
+    const char *v = getenv("WUP_KMS_RGB");
+    return !v || strcmp(v, "1");
+}
+static int yuv_setup(wup_kms_t *k) {
+    static const char vs[] = "attribute vec2 pos; void main(){gl_Position=vec4(pos,0.,1.);}";
+    static const char fs[] =
+        "precision highp float; uniform sampler2D image;"
+        "float sample_byte(float i){"
+        "float plane=0.; float w=854.; float q=i;"
+        "if(i>=409920.){plane=1.; w=427.; q=i-409920.;}"
+        "if(i>=512400.){plane=2.; q=i-512400.;}"
+        "float y=floor(q/w); float x=q-y*w;"
+        "if(plane>0.){x*=2.;y*=2.;}"
+        "vec3 rgb=floor(texture2D(image,(vec2(x,y)+0.5)/vec2(854.,480.)).bgr*255.+0.5);"
+        "float n=dot(rgb,vec3(66.,129.,25.)); float bias=16.;"
+        "if(plane==1.){n=dot(rgb,vec3(-38.,-74.,112.));bias=128.;}"
+        "if(plane==2.){n=dot(rgb,vec3(112.,-94.,-18.));bias=128.;}"
+        "return (floor((n+128.)/256.)+bias)/255.;}"
+        "void main(){float i=(floor(gl_FragCoord.y)*427.+floor(gl_FragCoord.x))*4.;"
+        "gl_FragColor=vec4(sample_byte(i),sample_byte(i+1.),sample_byte(i+2.),sample_byte(i+3.));}";
+    GLuint v=shader(GL_VERTEX_SHADER,vs), f=shader(GL_FRAGMENT_SHADER,fs);
+    GLint ok=0;
+    if(v&&f){
+        k->yuv_program=glCreateProgram();glAttachShader(k->yuv_program,v);glAttachShader(k->yuv_program,f);
+        glBindAttribLocation(k->yuv_program,0,"pos");glLinkProgram(k->yuv_program);
+        glGetProgramiv(k->yuv_program,GL_LINK_STATUS,&ok);
+    }
+    if(v)glDeleteShader(v);
+    if(f)glDeleteShader(f);
+    if(!ok)return fail("I420 shader link failed (WUP_KMS_RGB=1 restores RGB)");
+    glGenTextures(1,&k->yuv_color);glBindTexture(GL_TEXTURE_2D,k->yuv_color);
+    glTexImage2D(GL_TEXTURE_2D,0,GL_RGBA,427,360,0,GL_RGBA,GL_UNSIGNED_BYTE,NULL);
+    glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER,GL_NEAREST);
+    glGenFramebuffers(1,&k->yuv_fbo);glBindFramebuffer(GL_FRAMEBUFFER,k->yuv_fbo);
+    glFramebufferTexture2D(GL_FRAMEBUFFER,GL_COLOR_ATTACHMENT0,GL_TEXTURE_2D,k->yuv_color,0);
+    if(glCheckFramebufferStatus(GL_FRAMEBUFFER)!=GL_FRAMEBUFFER_COMPLETE || glGetError()!=GL_NO_ERROR)
+        return fail("I420 framebuffer failed");
+    fprintf(stderr,"[capture] KMS EGL packed I420 enabled (BT.601 limited)\n");
+    return 0;
+}
 /* WUP_EGL_OFFSCREEN_0886 */
 static int egl_fail(const char *stage) {
     fprintf(stderr,"[capture] KMS EGL %s: error=0x%x\n",stage,(unsigned)eglGetError());
@@ -178,6 +225,7 @@ static int egl_setup(wup_kms_t *k) {
     }
     if (v) glDeleteShader(v);
     if (f) glDeleteShader(f);
+    if (ok && wup_kms_i420_enabled() && yuv_setup(k)) ok=0;
     if (!eglMakeCurrent(k->display,EGL_NO_SURFACE,EGL_NO_SURFACE,EGL_NO_CONTEXT)) return egl_fail("release context");
     return ok?0:fail("GLES shader, import entrypoint or FBO setup failed");
 }
@@ -314,7 +362,16 @@ int wup_kms_egl(wup_kms_t *k,unsigned char *out,int x,int y,int w,int h) {
     const GLfloat pos[]={-1,-1,1,-1,-1,1,1,1},uv[]={l,t,r,t,l,b,r,b};
     glVertexAttribPointer(0,2,GL_FLOAT,GL_FALSE,0,pos);glVertexAttribPointer(1,2,GL_FLOAT,GL_FALSE,0,uv);
     glEnableVertexAttribArray(0);glEnableVertexAttribArray(1);glDrawArrays(GL_TRIANGLE_STRIP,0,4);
-    glReadPixels(0,0,FW,FH,GL_RGBA,GL_UNSIGNED_BYTE,out);
+    if(k->yuv_program) {
+        glBindFramebuffer(GL_FRAMEBUFFER,k->yuv_fbo);
+        glViewport(0,0,427,360);glUseProgram(k->yuv_program);
+        glActiveTexture(GL_TEXTURE0);glBindTexture(GL_TEXTURE_2D,k->color);
+        glDisable(GL_DITHER);
+        glVertexAttribPointer(0,2,GL_FLOAT,GL_FALSE,0,pos);
+        glDisableVertexAttribArray(1);glDrawArrays(GL_TRIANGLE_STRIP,0,4);
+        glReadPixels(0,0,427,360,GL_RGBA,GL_UNSIGNED_BYTE,out);
+        glEnable(GL_DITHER);
+    } else glReadPixels(0,0,FW,FH,GL_RGBA,GL_UNSIGNED_BYTE,out);
     ret=glGetError()==GL_NO_ERROR?0:-1;
     /* Drop the imported scanout reference before next frame. */
     glDeleteTextures(1,&k->texture);glGenTextures(1,&k->texture);
@@ -333,6 +390,9 @@ void wup_kms_close(wup_kms_t *k) {
             if(k->fbo)glDeleteFramebuffers(1,&k->fbo);
             if(k->color)glDeleteTextures(1,&k->color);
             if(k->program)glDeleteProgram(k->program);
+            if(k->yuv_program)glDeleteProgram(k->yuv_program);
+            if(k->yuv_fbo)glDeleteFramebuffers(1,&k->yuv_fbo);
+            if(k->yuv_color)glDeleteTextures(1,&k->yuv_color);
             eglMakeCurrent(k->display,EGL_NO_SURFACE,EGL_NO_SURFACE,EGL_NO_CONTEXT);
         }
         if(k->surface!=EGL_NO_SURFACE)eglDestroySurface(k->display,k->surface);

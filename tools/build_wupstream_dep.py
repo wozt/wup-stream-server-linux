@@ -51,6 +51,43 @@ def prepare_source(source):
             raise RuntimeError(f"Missing pinned upstream file: {filename}")
 
 
+def extend_i420(source):
+    header = source / "host/wupstream.h"
+    code = source / "host/wupstream.c"
+    declaration = "int wupstream_frame_i420(wupstream *w, const uint8_t *pixels);"
+    implementation = r"""
+int wupstream_frame_i420(wupstream *w, const uint8_t *pixels) {
+    if (!pixels) return -1;
+    pthread_mutex_lock(&w->mu);
+    while (w->fresh && !w->gone) pthread_cond_wait(&w->cv, &w->mu);
+    if (w->gone) { pthread_mutex_unlock(&w->mu); return -1; }
+    const uint8_t *src = pixels;
+    for (int i = 0; i < 3; ++i) {
+        int width = i ? WUPSTREAM_W / 2 : WUPSTREAM_W;
+        int height = i ? WUPSTREAM_H / 2 : WUPSTREAM_H;
+        for (int y = 0; y < height; ++y)
+            memcpy(w->pic.img.plane[i] + y * w->pic.img.i_stride[i],
+                   src + y * width, width);
+        src += width * height;
+    }
+    w->fresh = w->have_pic = 1;
+    while (w->fresh && !w->gone) pthread_cond_wait(&w->cv, &w->mu);
+    int r = w->gone ? -1 : 0;
+    pthread_mutex_unlock(&w->mu);
+    return r;
+}
+"""
+    for path, anchor, addition in (
+        (header, "int wupstream_audio(", declaration + "\n"),
+        (code, "int wupstream_audio(", implementation + "\n"),
+    ):
+        text = path.read_text()
+        if addition not in text:
+            if text.count(anchor) != 1:
+                raise RuntimeError(f"Unexpected pinned source: {path}")
+            path.write_text(text.replace(anchor, addition + anchor, 1))
+
+
 def copy_atomic(src, target):
     tmp = target.with_name(target.name + ".tmp")
     shutil.copyfile(src, tmp)
@@ -65,6 +102,7 @@ def main(argv):
         raise SystemExit("Meson outputs must share the same build directory")
     source = out_lib.parent / "_wupstream_source"
     prepare_source(source)
+    extend_i420(source)
     # The upstream build script already pins x264 and applies the DRH patch.
     run(["sh", "host/build.sh"], cwd=source)
     archive = source / "build" / "host" / "libwupstream.a"

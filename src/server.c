@@ -302,6 +302,7 @@ static void *server_thread(void *arg) {
             /* Main thread only reads borrowed frames from the capture worker.
              * No additional frame memcpy is performed before the encoder. */
             const unsigned char *frame_pixels = frame;
+            int frame_i420 = 0;
             int map_x = 0, map_y = 0, map_w = 0, map_h = 0;
             /* gamepad-only mode: static test frame, no capture at all */
             if (s->gamepad_only) {
@@ -391,6 +392,7 @@ static void *server_thread(void *arg) {
                     sample_fresh++;
                     capture_target_rect(&cap, &map_x, &map_y, &map_w, &map_h);
                 }
+                frame_i420 = cap.capture_backend == 3 && wup_kms_i420_enabled();
                 cap_fails = 0;
             }
 
@@ -433,7 +435,8 @@ static void *server_thread(void *arg) {
 
             /* canonical loop order: input -> frame -> audio */
             double frame_beg = v98_clock();
-            if (wupstream_frame(pad, frame_pixels, FW * 4, WUPSTREAM_BGRA) != 0) {
+            if ((frame_i420 ? wupstream_frame_i420(pad, frame_pixels) :
+                 wupstream_frame(pad, frame_pixels, FW * 4, WUPSTREAM_BGRA)) != 0) {
                 lost = 1; break;
             }
             double frame_end = v98_clock();
