@@ -5,6 +5,7 @@
 #include <drm_fourcc.h>
 #include <sys/socket.h>
 #include <unistd.h>
+#include <fcntl.h>
 #include <string.h>
 #include <errno.h>
 #include <stdlib.h>
