@@ -4,17 +4,18 @@ Stream your PC screens, windows or regions to a **Wii U GamePad** over Wi-Fi,
 with GamePad controls sent back to the PC. Built on
 [`wup-stream`](https://github.com/ravensclawx/wup-stream) (`libwupstream`).
 
-One process, written in C: GTK3 settings UI + tray icon, direct X11 capture,
-PulseAudio audio, virtual gamepad or keyboard/mouse injection.
+Written in C: GTK3 settings UI + tray icon, selectable X11 or DRM/KMS capture,
+PulseAudio audio, virtual gamepad or keyboard/mouse injection. KMS uses a separate
+privileged framebuffer-export helper; the main server runs as a normal user.
 
 ## Features
 
 - **Video sources**: full monitor (multi-monitor aware, XRandR geometry),
   any window (works while occluded, follows move/resize), or a free-selected
   screen region. Aspect modes: letterbox / crop / stretch.
-- **Low latency**: direct XCB MIT-SHM capture + `libswscale`
-  (`SWS_FAST_BILINEAR`) straight into `libwupstream` — no ffmpeg anywhere.
-  x264 runs `veryfast`+`zerolatency`, zero B-frames/lookahead.
+- **Low latency**: four selectable capture backends, CPU or GPU scaling,
+  and direct integration with `libwupstream`. x264 remains the CPU encoder;
+  low-latency mode uses `zerolatency` with no B-frames/lookahead.
 - **Audio both ways**: PC monitor → GamePad speakers and GamePad mic → PC,
   via direct `libpulse` streams (~1-3 ms fragments, bounded ring buffers).
   Audio is paced by wall clock, decoupled from video frames.
@@ -35,11 +36,15 @@ PulseAudio audio, virtual gamepad or keyboard/mouse injection.
 - **Live pad visualization**: buttons, sticks, touch, artificial-horizon
   attitude indicator and gyro bars, drawn on a gamepad silhouette
   (`src/viz.c`, fed via `pad_viz_feed()`).
-- Single instance (flock), autostart `.desktop`, tray icon, all UI in English.
+- Single instance (flock), autostart `.desktop`, tray icon, JSON themes and translations (English default).
 
 ## Requirements
 
-- Linux, X11 (XCB + MIT-SHM), GTK3, PulseAudio (or pipewire-pulse)
+- Linux, X11, GTK3, PulseAudio (or pipewire-pulse)
+- DRM/KMS build dependencies: libdrm, GBM, EGL and GLESv2 development headers.
+  KMS runtime requires a compatible DRM driver, access to the relevant DRM nodes,
+  and the privileged helper. Graphical installation requires `pkexec`, a Polkit
+  authentication agent, `setcap`/`getcap` and the `video` group.
 - `libswscale`, `libx11-xcb`, `libXtst`, `libjson-glib`, `libpulse`, `libevdev`-free
   (`/dev/uinput` access for virtual gamepad mode)
 - A Wii U GamePad running the
@@ -92,6 +97,47 @@ Autostart entry: `~/.config/autostart/wupstreamd.desktop`.
 Debug: `WUPSTREAMD_DEBUG=1 ./build/wupstreamd` prints audio ring-buffer
 fill levels and capture stats to stderr.
 
+## Capture backends and permissions
+
+Select the backend in **Quality > Capture**. No automatic fallback is used.
+
+| Backend | Acquisition | Scaling |
+| --- | --- | --- |
+| XCB MIT-SHM | X11 shared memory | CPU |
+| XCB GetImage | X11 GetImage | CPU |
+| DRM/KMS CPU | DMA-BUF / GBM mapping | CPU |
+| DRM/KMS EGL | DMA-BUF / EGL import | GPU, offscreen GLES framebuffer |
+
+KMS supports monitor capture with multi-monitor geometry and modifier planes
+(including AMD DCC on the tested RX 6600). Use XCB for independent window capture;
+KMS reads display scanout, not an isolated window backing store.
+
+Measured on one RX 6600, capturing a 2560x1440 monitor to 854x480 at around 60 FPS
+(CRF 14, 10000 kbps), before privilege isolation:
+
+| Backend | Capture time per frame |
+| --- | ---: |
+| DRM/KMS EGL | 1.0 ms |
+| DRM/KMS CPU | 8.8 ms |
+| XCB MIT-SHM | 16.5 ms |
+| XCB GetImage | 17.4 ms |
+
+These are local snapshot measurements, not guaranteed performance or end-to-end latency.
+
+The AppImage includes `wup-kms-helper`. On first KMS activation the application
+requests administrator authentication through Polkit to install it at
+`/usr/local/libexec/wupstreamd/wup-kms-helper` with `cap_sys_admin=ep`.
+The main server does not need this capability or root privileges. Subsequent
+launches reuse a compatible installed helper. Helper updates and removal require
+explicit authorization; XCB requires no helper. Use **Quality > KMS helper** to
+manage it, after stopping streaming and selecting XCB. Install only trusted builds:
+CAP_SYS_ADMIN is powerful and the helper is executable by the authorized video group.
+Removing the file prevents new launches but does not terminate existing helpers.
+
+The helper exports DMA-BUF file descriptors over a private Unix socket, while
+EGL scaling and x264 encoding remain in the unprivileged server. Native Wayland
+capture is not supported. CI checks virtual X11 UI startup, not real GPU capture.
+
 ## GitHub Actions: automatic AppImage releases
 
 Every successful push to `main` runs the Linux x86_64 build, packages an
@@ -129,7 +175,7 @@ Same as upstream wup-stream where applicable; button icons are CC0
   Window row. The main window hides while the X11 picker runs. Left-click a
   visible EWMH client window, or press Escape/right-click to cancel.
 - **Measured statistics** in GamePad Connection: transmitted frame rate,
-  average X11 capture duration and average `wupstream_frame()` call duration
+  average capture, acquisition and scaling durations and average `wupstream_frame()` call duration
   (including pacing), plus capture errors, refreshed once a second. **These are
   not measurements of network bitrate or end-to-end Wi-Fi latency**: the current
   public `libwupstream` API exposes neither encoded bytes nor render timestamps.

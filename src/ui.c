@@ -375,6 +375,9 @@ static void wup_apply_theme(ui_t *u) {
         "window.wup-settings.dialog box, window.wup-settings.dialog .dialog-action-area { "
         "background-color:%s; color:%s; }"
         "window.wup-settings.dialog label { color:%s; }", bg,fg,fg);
+    g_string_append_printf(css,
+        "window.wup-kms-dialog { background-image:none; background-color:%s; "
+        "color:%s; border:1px solid %s; border-radius:6px; }", bg,fg,border);
     GError *err=NULL;
     gtk_css_provider_load_from_data(u->theme_css,css->str,-1,&err);
     if (err) {g_warning("Theme CSS: %s",err->message);g_clear_error(&err);}
@@ -1025,6 +1028,10 @@ static void on_kms_maintenance(GtkButton *b, ui_t *u) {
         GtkWidget *d=gtk_message_dialog_new(GTK_WINDOW(u->window),GTK_DIALOG_MODAL,GTK_MESSAGE_INFO,GTK_BUTTONS_CLOSE,"%s",wup_i18n_lookup(u->i18n,"Select an XCB backend and stop streaming before KMS maintenance."));
         gtk_style_context_add_class(gtk_widget_get_style_context(d), "wup-settings");
         gtk_widget_set_name(d, "wup-settings");
+        gtk_window_set_decorated(GTK_WINDOW(d), FALSE);
+        gtk_window_set_position(GTK_WINDOW(d), GTK_WIN_POS_CENTER_ON_PARENT);
+        gtk_window_set_resizable(GTK_WINDOW(d), FALSE);
+        gtk_style_context_add_class(gtk_widget_get_style_context(d), "wup-kms-dialog");
         gtk_style_context_add_class(gtk_widget_get_style_context(d), "wup-settings");
         gtk_dialog_run(GTK_DIALOG(d)); gtk_widget_destroy(d); return;
     }

@@ -36,6 +36,10 @@ int kms_permissions_ready(void) {
 }
 
 static void theme_dialog(GtkWidget *d) {
+    gtk_window_set_decorated(GTK_WINDOW(d), FALSE);
+    gtk_window_set_position(GTK_WINDOW(d), GTK_WIN_POS_CENTER_ON_PARENT);
+    gtk_window_set_resizable(GTK_WINDOW(d), FALSE);
+    gtk_style_context_add_class(gtk_widget_get_style_context(d), "wup-kms-dialog");
     GtkStyleContext *ctx = gtk_widget_get_style_context(d);
     gtk_style_context_add_class(ctx, "wup-settings");
     gtk_widget_set_name(d, "wup-settings");
