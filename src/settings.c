@@ -32,6 +32,7 @@ void settings_defaults(settings_t *s) {
     memset(s, 0, sizeof *s);
     s->source_type = SRC_SCREEN;
     s->aspect = ASPECT_LETTERBOX;
+    s->capture_backend = 0;
     s->crf = 18;
     s->kbps = 10000;
     s->gop = 0;
@@ -108,6 +109,7 @@ settings_t *settings_load(void) {
     json_str(root, "preset_name", s->preset_name, sizeof s->preset_name);
     s->custom_quality = json_int(root, "custom_quality", 0);
     s->low_latency = json_int(root, "low_latency", 1);
+    s->capture_backend = json_int(root, "capture_backend", 0) == 1;
     s->crf = json_int(root, "crf", s->crf);
     s->kbps = json_int(root, "kbps", s->kbps);
     s->gop = 0; /* Ignore old saved values. */
@@ -220,6 +222,7 @@ void settings_save(settings_t *s) {
     json_object_set_string_member(root, "preset_name", s->preset_name);
     json_object_set_int_member(root, "custom_quality", s->custom_quality);
     json_object_set_int_member(root, "low_latency", s->low_latency);
+    json_object_set_int_member(root, "capture_backend", s->capture_backend);
     json_object_set_int_member(root, "crf", s->crf);
     json_object_set_int_member(root, "kbps", s->kbps);
     json_object_set_int_member(root, "audio_pc_to_pad", s->audio_pc_to_pad);

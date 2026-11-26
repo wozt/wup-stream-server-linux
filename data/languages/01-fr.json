@@ -2,6 +2,8 @@
   "id": "fr",
   "name": "Français",
   "translations": {
+    "Select the X11 capture backend; GetImage avoids MIT-SHM.": "Choisir la méthode de capture X11 ; GetImage évite MIT-SHM.",
+    "Capture:": "Capture :",
     "GAMEPAD ONLY MODE": "MODE GAMEPAD UNIQUEMENT",
     "no capture - inputs & sensors active": "Aucune capture — commandes et capteurs actifs",
     "Theme:": "Thème :",

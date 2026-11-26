@@ -2,6 +2,8 @@
   "id": "ja",
   "name": "日本語",
   "translations": {
+    "Select the X11 capture backend; GetImage avoids MIT-SHM.": "X11 のキャプチャ方式を選択します。GetImage は MIT-SHM を使用しません。",
+    "Capture:": "キャプチャ:",
     "GAMEPAD ONLY MODE": "ゲームパッド専用モード",
     "no capture - inputs & sensors active": "キャプチャなし — 操作とセンサーは有効",
     "Theme:": "テーマ:",

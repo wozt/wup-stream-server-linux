@@ -70,7 +70,9 @@ static int setup_image(capture_t *c) {
 
     /* get the xcb connection bound to the same Xlib display so XIDs match */
     c->xcb = XGetXCBConnection(c->dpy);
-    if (!c->xcb) return 0;
+    if (!c->xcb) return c->capture_backend == 1 ? -1 : 0;
+    /* Explicit GetImage mode never allocates or attaches MIT-SHM. */
+    if (c->capture_backend == 1) return 0;
 
     /* check MIT-SHM presence */
     xcb_query_extension_cookie_t eck =
@@ -136,6 +138,7 @@ static int setup_scaler(capture_t *c) {
 int capture_start(capture_t *c, const settings_t *s) {
     memset(c, 0, sizeof *c);
     c->aspect = s->aspect;
+    c->capture_backend = s->capture_backend;
     c->shmid = -1;
     c->dpy = XOpenDisplay(NULL);
     if (!c->dpy) return -1;
@@ -176,6 +179,7 @@ int capture_grab(capture_t *c, unsigned char *out) {
     const uint8_t *src_data;
     int src_stride;
     XImage *tmp_img = NULL;
+    xcb_get_image_reply_t *xcb_img = NULL;
     double x11_beg = capture_seconds();
 
     if (c->use_shm) {
@@ -192,6 +196,40 @@ int capture_grab(capture_t *c, unsigned char *out) {
         }
         free(rep);
         src_data = (const uint8_t *)c->shmaddr;
+        src_stride = c->src_w * 4;
+    } else if (c->capture_backend == 1) {
+        /* Core X11 request; the reply owns the pixel storage until scaling ends. */
+        if (c->cap_x < INT16_MIN || c->cap_x > INT16_MAX ||
+            c->cap_y < INT16_MIN || c->cap_y > INT16_MAX ||
+            c->src_w <= 0 || c->src_w > UINT16_MAX ||
+            c->src_h <= 0 || c->src_h > UINT16_MAX) return -1;
+        const xcb_setup_t *setup = xcb_get_setup(c->xcb);
+        if (!setup || setup->image_byte_order != XCB_IMAGE_ORDER_LSB_FIRST)
+            return -1;
+        xcb_get_image_cookie_t ck = xcb_get_image(
+            c->xcb, XCB_IMAGE_FORMAT_Z_PIXMAP, c->drawable,
+            c->cap_x, c->cap_y, c->src_w, c->src_h, UINT32_MAX);
+        xcb_generic_error_t *err = NULL;
+        xcb_img = xcb_get_image_reply(c->xcb, ck, &err);
+        if (err || !xcb_img) {
+            free(err); free(xcb_img); return -1;
+        }
+        /* Existing scaler expects little-endian BGR0, four bytes per pixel. */
+        int format_ok = 0;
+        for (xcb_format_iterator_t it = xcb_setup_pixmap_formats_iterator(setup);
+             it.rem; xcb_format_next(&it)) {
+            if (it.data->depth == xcb_img->depth &&
+                it.data->bits_per_pixel == 32 && it.data->scanline_pad == 32 &&
+                (xcb_img->depth == 24 || xcb_img->depth == 32)) {
+                format_ok = 1; break;
+            }
+        }
+        size_t need = (size_t)c->src_w * c->src_h * 4;
+        if (!format_ok || need > INT_MAX ||
+            xcb_get_image_data_length(xcb_img) != (int)need) {
+            free(xcb_img); return -1;
+        }
+        src_data = xcb_get_image_data(xcb_img);
         src_stride = c->src_w * 4;
     } else {
         tmp_img = XGetImage(c->dpy, c->drawable, c->cap_x, c->cap_y,
@@ -216,6 +254,7 @@ int capture_grab(capture_t *c, unsigned char *out) {
     int scaled = sws_scale(c->sws, (const uint8_t *const *)src_planes, src_strides,
                            0, c->src_h, dst_planes, dst_strides);
     if (tmp_img) XDestroyImage(tmp_img);
+    free(xcb_img);
     if (scaled != c->tmp_h) return -1;
     if (c->aspect == ASPECT_CROP) {
         int sx = (c->tmp_w - FW) / 2, sy = (c->tmp_h - FH) / 2;

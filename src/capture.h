@@ -21,6 +21,7 @@ typedef struct {
     int shmid;
     size_t shm_size;
     int use_shm;
+    int capture_backend;
     /* scaler */
     struct SwsContext *sws;
     unsigned char *tmp;         /* intermediate sws output */

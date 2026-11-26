@@ -2,6 +2,8 @@
   "id": "ru",
   "name": "Русский",
   "translations": {
+    "Select the X11 capture backend; GetImage avoids MIT-SHM.": "Выберите метод захвата X11; GetImage не использует MIT-SHM.",
+    "Capture:": "Захват:",
     "GAMEPAD ONLY MODE": "РЕЖИМ ТОЛЬКО GAMEPAD",
     "no capture - inputs & sensors active": "Без захвата — управление и датчики активны",
     "Theme:": "Тема:",
