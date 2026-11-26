@@ -16,11 +16,20 @@
 #include <string.h>
 #include <limits.h>
 #include <errno.h>
+#include <sys/socket.h>
+#include <sys/time.h>
+#include <sys/wait.h>
+#include <spawn.h>
+#include <signal.h>
+#include "kms_wire.h"
 #define FW 854
 #define FH 480
 struct wup_kms {
     int fd, sw, sh, x, y, w, h, gpu;
     uint32_t crtc;
+    int helper_sock;
+    pid_t helper_pid;
+    int cpu_render_fd;
     int fb_x, fb_y;
     int screen_x, screen_y;
     struct gbm_device *gbm;
@@ -37,13 +46,6 @@ struct wup_kms {
     PFNGLEGLIMAGETARGETTEXTURE2DOESPROC bind_image;
 };
 static int fail(const char *why) { fprintf(stderr,"[capture] KMS: %s (no fallback)\n",why); return -1; }
-static void close_handles(int fd, drmModeFB2 *fb) {
-    for (int i=0;i<4;i++) if(fb->handles[i]) {
-        int duplicate=0;
-        for(int j=0;j<i;j++) if(fb->handles[j]==fb->handles[i]) duplicate=1;
-        if(!duplicate) { struct drm_gem_close c={0}; c.handle=fb->handles[i]; drmIoctl(fd,DRM_IOCTL_GEM_CLOSE,&c); }
-    }
-}
 /* WUP_KMS_MULTI_MONITOR: match exact DRM names or AMD XRandR zero-based names. */
 static int connector_matches(const char *xname, const char *drmname) {
     if (!strcmp(xname, drmname)) return 1;
@@ -58,55 +60,58 @@ static int connector_matches(const char *xname, const char *drmname) {
     }
     return 0;
 }
-/* Legacy CRTC scanout coordinates are framebuffer-relative, not necessarily zero. */
-static drmModeFB2 *framebuffer(wup_kms_t *k) {
-    drmModeCrtc *c=drmModeGetCrtc(k->fd,k->crtc);
-    if(!c) return NULL;
-    uint32_t id=c->buffer_id;
-    uint32_t fx=c->x, fy=c->y;
-    int mode_ok=c->mode_valid && c->width==(uint32_t)k->sw && c->height==(uint32_t)k->sh;
-    drmModeFreeCrtc(c);
-    if(!id || !mode_ok) { fail("CRTC inactive or display mode changed"); return NULL; }
-    drmModeFB2 *fb=drmModeGetFB2(k->fd,id);
-    if(!fb) { fprintf(stderr,"[capture] KMS GetFB2 id=%u: %s\n",id,strerror(errno)); return NULL; }
-    if(!fb->handles[0]) {
-        fail("GetFB2 returned no GEM handle: DRM master or CAP_SYS_ADMIN required");
-        drmModeFreeFB2(fb); return NULL;
-    }
-    if((fb->pixel_format!=DRM_FORMAT_XRGB8888 && fb->pixel_format!=DRM_FORMAT_ARGB8888) ||
-       (uint64_t)fx+k->x+k->w>fb->width || (uint64_t)fy+k->y+k->h>fb->height) {
-        fprintf(stderr,"[capture] KMS unsupported FB %u: %ux%u format=%08x modifier=%llx offset=%u,%u extra_handle=%u\n",id,fb->width,fb->height,fb->pixel_format,(unsigned long long)fb->modifier,fx,fy,fb->handles[1]);
-        close_handles(k->fd,fb); drmModeFreeFB2(fb); return NULL;
-    }
-    k->fb_x=(int)fx+k->x; k->fb_y=(int)fy+k->y;
-    return fb;
-}
-/* WUP_KMS_MULTIPLANE_DCC: auxiliary modifier planes are not color channels.
- * Export every GEM handle before closing any; repeated handles are legal. */
+/* WUP_KMS_HELPER_0888: one helper per capture, private inherited socket. */
 static void close_primes(int prime[4]) {
-    for (int i=0; i<4; i++) if (prime[i]>=0) { close(prime[i]); prime[i]=-1; }
+    for(int i=0;i<4;i++) if(prime[i]>=0) {close(prime[i]);prime[i]=-1;}
 }
-static int export_frame(wup_kms_t *k, drmModeFB2 **fb, int prime[4], int *planes) {
-    *planes=0;
-    for (int i=0; i<4; i++) prime[i]=-1;
-    *fb=framebuffer(k);
-    if (!*fb) return fail("cannot access primary framebuffer; check permissions, format and geometry");
-    int ret=0;
-    for (int i=0; i<4; i++) {
-        if (!(*fb)->handles[i]) continue;
-        if (i!=*planes || !(*fb)->pitches[i]) { ret=-1; break; }
-        if (drmPrimeHandleToFD(k->fd,(*fb)->handles[i],DRM_CLOEXEC|DRM_RDWR,&prime[i])) {
-            fprintf(stderr,"[capture] KMS PRIME plane %d: %s\n",i,strerror(errno));
-            ret=-1; break;
-        }
-        ++*planes;
+static int helper_start(wup_kms_t *k) {
+    int sp[2];
+    if(socketpair(AF_UNIX,SOCK_SEQPACKET|SOCK_CLOEXEC,0,sp)) return -1;
+    int s=fcntl(sp[1],F_DUPFD_CLOEXEC,10), d=fcntl(k->fd,F_DUPFD_CLOEXEC,10);
+    close(sp[1]);
+    if(s<0 || d<0) {if(s>=0)close(s);if(d>=0)close(d);close(sp[0]);return -1;}
+    posix_spawn_file_actions_t fa;
+    int rc=posix_spawn_file_actions_init(&fa);
+    if(!rc) {
+        rc=posix_spawn_file_actions_adddup2(&fa,s,3);
+        if(!rc)rc=posix_spawn_file_actions_adddup2(&fa,d,4);
+        char *argv[]={KMS_HELPER_PATH,NULL}; char *env[]={"PATH=/usr/bin:/bin",NULL};
+        if(!rc)rc=posix_spawn(&k->helper_pid,KMS_HELPER_PATH,&fa,NULL,argv,env);
+        posix_spawn_file_actions_destroy(&fa);
     }
-    close_handles(k->fd,*fb);
-    if (ret || !*planes || (*planes>1 && !((*fb)->flags & DRM_MODE_FB_MODIFIERS))) {
-        close_primes(prime); drmModeFreeFB2(*fb); *fb=NULL;
-        return fail("DMA-BUF plane export failed or missing explicit modifier");
-    }
+    close(s);close(d);
+    if(rc) {close(sp[0]);k->helper_pid=0;fprintf(stderr,"[capture] KMS helper: %s\n",strerror(rc));return -1;}
+    k->helper_sock=sp[0];
+    struct timeval timeout={2,0};
+    if(setsockopt(sp[0],SOL_SOCKET,SO_RCVTIMEO,&timeout,sizeof timeout) ||
+       setsockopt(sp[0],SOL_SOCKET,SO_SNDTIMEO,&timeout,sizeof timeout)) return -1;
     return 0;
+}
+static int export_frame(wup_kms_t *k,drmModeFB2 **fb,int prime[4],int *planes) {
+    *fb=NULL;*planes=0;for(int i=0;i<4;i++)prime[i]=-1;
+    struct kms_request q={KMS_WIRE_MAGIC,k->crtc};
+    if(send(k->helper_sock,&q,sizeof q,MSG_NOSIGNAL)!=(ssize_t)sizeof q) return fail("helper request failed");
+    struct kms_reply r={0};struct iovec iov={&r,sizeof r};
+    union {struct cmsghdr align;char bytes[CMSG_SPACE(4*sizeof(int))];} control={0};
+    struct msghdr msg={0};msg.msg_iov=&iov;msg.msg_iovlen=1;msg.msg_control=control.bytes;msg.msg_controllen=sizeof control.bytes;
+    ssize_t n=recvmsg(k->helper_sock,&msg,MSG_CMSG_CLOEXEC);
+    int count=0;
+    if(n>=0) for(struct cmsghdr *h=CMSG_FIRSTHDR(&msg);h;h=CMSG_NXTHDR(&msg,h)) {
+        if(h->cmsg_level!=SOL_SOCKET || h->cmsg_type!=SCM_RIGHTS || h->cmsg_len<CMSG_LEN(0)) continue;
+        size_t nf=(h->cmsg_len-CMSG_LEN(0))/sizeof(int);
+        for(size_t i=0;i<nf;i++){int fd;memcpy(&fd,(char*)CMSG_DATA(h)+i*sizeof fd,sizeof fd);if(count<4)prime[count++]=fd;else close(fd);}
+    }
+    if(n!=(ssize_t)sizeof r || (msg.msg_flags&(MSG_TRUNC|MSG_CTRUNC)) || r.magic!=KMS_WIRE_MAGIC ||
+       !r.count || r.count!=(uint32_t)count || r.sw!=(uint32_t)k->sw || r.sh!=(uint32_t)k->sh ||
+       (uint64_t)r.x+k->x+k->w>r.width || (uint64_t)r.y+k->y+k->h>r.height ||
+       (r.format!=DRM_FORMAT_XRGB8888 && r.format!=DRM_FORMAT_ARGB8888)) {
+        close_primes(prime);return fail("helper returned no usable framebuffer (check installed capability and display mode)");
+    }
+    *fb=calloc(1,sizeof **fb);if(!*fb){close_primes(prime);return -1;}
+    (*fb)->fb_id=r.id;(*fb)->width=r.width;(*fb)->height=r.height;(*fb)->pixel_format=r.format;
+    (*fb)->flags=r.flags;(*fb)->modifier=r.modifier;
+    memcpy((*fb)->pitches,r.pitch,sizeof r.pitch);memcpy((*fb)->offsets,r.offset,sizeof r.offset);
+    k->fb_x=(int)r.x+k->x;k->fb_y=(int)r.y+k->y;*planes=count;return 0;
 }
 static GLuint shader(GLenum kind,const char *source) {
     GLuint s=glCreateShader(kind); glShaderSource(s,1,&source,NULL); glCompileShader(s);
@@ -179,7 +184,7 @@ static int egl_setup(wup_kms_t *k) {
 wup_kms_t *wup_kms_open(const char *output,int sw,int sh,int sx,int sy,int x,int y,int w,int h,int gpu) {
     if(sw<=0||sh<=0||x<0||y<0||w<=0||h<=0||x>sw-w||y>sh-h) return NULL;
     wup_kms_t *k=calloc(1,sizeof *k); if(!k) return NULL;
-    k->render_fd=-1;k->fd=-1;k->sw=sw;k->sh=sh;k->x=x;k->y=y;k->w=w;k->h=h;k->gpu=gpu;
+    k->helper_sock=-1;k->cpu_render_fd=-1;k->render_fd=-1;k->fd=-1;k->sw=sw;k->sh=sh;k->x=x;k->y=y;k->w=w;k->h=h;k->gpu=gpu;
     k->screen_x=sx; k->screen_y=sy;
     glob_t paths={0};
     const char *forced=getenv("WUP_KMS_DEVICE");
@@ -214,7 +219,14 @@ wup_kms_t *wup_kms_open(const char *output,int sw,int sh,int sx,int sy,int x,int
     }
     globfree(&paths);
     if(k->fd<0) goto bad;
-    k->gbm=gbm_create_device(k->fd); if(!k->gbm) goto bad;
+    if(helper_start(k)) goto bad;
+    if(!gpu) {
+        char *node=drmGetRenderDeviceNameFromFd(k->fd);
+        if(!node) goto bad;
+        k->cpu_render_fd=open(node,O_RDWR|O_CLOEXEC);free(node);
+        if(k->cpu_render_fd<0) goto bad;
+        k->gbm=gbm_create_device(k->cpu_render_fd);if(!k->gbm) goto bad;
+    }
     drmModeFB2 *fb=NULL; int prime[4], planes;
     if(export_frame(k,&fb,prime,&planes)) goto bad;
     fprintf(stderr,"[capture] KMS framebuffer %u: %ux%u crop=%d,%d %dx%d modifier=%llx\n",fb->fb_id,fb->width,fb->height,k->fb_x,k->fb_y,k->w,k->h,(unsigned long long)fb->modifier);
@@ -330,6 +342,12 @@ void wup_kms_close(wup_kms_t *k) {
     if(k->render_gbm)gbm_device_destroy(k->render_gbm);
     if(k->render_fd>=0)close(k->render_fd);
     if(k->gbm)gbm_device_destroy(k->gbm);
+    if(k->cpu_render_fd>=0)close(k->cpu_render_fd);
+    if(k->helper_sock>=0)close(k->helper_sock);
+    if(k->helper_pid>0) {
+        kill(k->helper_pid,SIGTERM);
+        while(waitpid(k->helper_pid,NULL,0)<0 && errno==EINTR) {}
+    }
     if(k->fd>=0)close(k->fd);
     free(k);
 }
