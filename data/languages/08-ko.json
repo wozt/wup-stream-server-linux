@@ -2,7 +2,7 @@
   "id": "ko",
   "name": "한국어",
   "translations": {
-    "Select the X11 capture backend; GetImage avoids MIT-SHM.": "X11 캡처 방식을 선택합니다. GetImage는 MIT-SHM을 사용하지 않습니다.",
+    "Select the capture backend. DRM/KMS requires additional permissions; EGL scales on the GPU. No automatic fallback.": "캡처 방식을 선택합니다. DRM/KMS는 추가 권한이 필요하며 EGL은 GPU에서 크기를 조절합니다. 자동 전환은 없습니다.",
     "Capture:": "캡처:",
     "GAMEPAD ONLY MODE": "게임패드 전용 모드",
     "no capture - inputs & sensors active": "화면 캡처 없음 — 입력과 센서 활성",

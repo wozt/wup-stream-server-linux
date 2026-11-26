@@ -2,7 +2,7 @@
   "id": "zh-cn",
   "name": "简体中文",
   "translations": {
-    "Select the X11 capture backend; GetImage avoids MIT-SHM.": "选择 X11 捕获方式；GetImage 不使用 MIT-SHM。",
+    "Select the capture backend. DRM/KMS requires additional permissions; EGL scales on the GPU. No automatic fallback.": "选择捕获方式。DRM/KMS 需要额外权限；EGL 在 GPU 上缩放。不自动回退。",
     "Capture:": "捕获：",
     "GAMEPAD ONLY MODE": "仅 GamePad 模式",
     "no capture - inputs & sensors active": "不采集画面 — 按键与传感器保持启用",

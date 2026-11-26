@@ -2,7 +2,7 @@
   "id": "ja",
   "name": "日本語",
   "translations": {
-    "Select the X11 capture backend; GetImage avoids MIT-SHM.": "X11 のキャプチャ方式を選択します。GetImage は MIT-SHM を使用しません。",
+    "Select the capture backend. DRM/KMS requires additional permissions; EGL scales on the GPU. No automatic fallback.": "キャプチャ方式を選択します。DRM/KMSには追加権限が必要です。EGLはGPUで拡大縮小します。自動切り替えはありません。",
     "Capture:": "キャプチャ:",
     "GAMEPAD ONLY MODE": "ゲームパッド専用モード",
     "no capture - inputs & sensors active": "キャプチャなし — 操作とセンサーは有効",

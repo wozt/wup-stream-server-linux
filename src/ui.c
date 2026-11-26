@@ -1026,7 +1026,7 @@ static GtkWidget *build_quality_section(ui_t *u) {
     gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(backend), "DRM/KMS CPU");
     gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(backend), "DRM/KMS EGL");
     gtk_combo_box_set_active(GTK_COMBO_BOX(backend), u->s->capture_backend);
-    gtk_widget_set_tooltip_text(backend, "Select the X11 capture backend; GetImage avoids MIT-SHM.");
+    gtk_widget_set_tooltip_text(backend, "Select the capture backend. DRM/KMS requires additional permissions; EGL scales on the GPU. No automatic fallback.");
     g_signal_connect(backend, "changed", G_CALLBACK(on_capture_backend_changed), u);
     gtk_grid_attach(GTK_GRID(grid), mk_label("Capture:"), 2, 1, 1, 1);
     gtk_grid_attach(GTK_GRID(grid), backend, 3, 1, 1, 1);
@@ -2173,7 +2173,7 @@ void ui_refresh_status(ui_t *u) {
             snprintf(metrics_text, sizeof metrics_text,
                 "FPS %.1f | New %.1f | Capt %.1f\n"
                 "Repeat %u | Drop %u | Err %u\n"
-                "Cap %.1fms | X11 %.1fms | Scale %.1fms | Frame %.1fms",
+                "Cap %.1fms | Acquire %.1fms | Scale %.1fms | Frame %.1fms",
                 m.fps, m.fresh_fps, m.captured_fps,
                 m.repeated, m.dropped, m.capture_errors,
                 m.capture_ms, m.x11_ms, m.scale_ms, m.frame_call_ms);

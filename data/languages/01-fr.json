@@ -2,7 +2,7 @@
   "id": "fr",
   "name": "Français",
   "translations": {
-    "Select the X11 capture backend; GetImage avoids MIT-SHM.": "Choisir la méthode de capture X11 ; GetImage évite MIT-SHM.",
+    "Select the capture backend. DRM/KMS requires additional permissions; EGL scales on the GPU. No automatic fallback.": "Choisir la méthode de capture. DRM/KMS exige des permissions supplémentaires ; EGL redimensionne sur le GPU. Aucun repli automatique.",
     "Capture:": "Capture :",
     "GAMEPAD ONLY MODE": "MODE GAMEPAD UNIQUEMENT",
     "no capture - inputs & sensors active": "Aucune capture — commandes et capteurs actifs",
