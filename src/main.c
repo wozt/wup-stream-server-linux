@@ -73,8 +73,6 @@ int main(int argc, char **argv) {
         kms_ready = kms_permissions_ensure(NULL,tr);
         wup_i18n_free(tr);
     }
-    server_t *srv = server_new(s);
-    ui_t *ui = ui_new(s, srv);
 
     ensure_autostart();
 
