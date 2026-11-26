@@ -29,7 +29,9 @@ struct wup_kms {
     EGLDisplay display;
     EGLContext context;
     EGLSurface surface;
-    GLuint program, texture;
+    GLuint program, texture, fbo, color;
+    int render_fd;
+    struct gbm_device *render_gbm;
     PFNEGLCREATEIMAGEKHRPROC create_image;
     PFNEGLDESTROYIMAGEKHRPROC destroy_image;
     PFNGLEGLIMAGETARGETTEXTURE2DOESPROC bind_image;
@@ -112,40 +114,72 @@ static GLuint shader(GLenum kind,const char *source) {
     if(!ok){ char log[512]={0}; glGetShaderInfoLog(s,sizeof log,NULL,log); fprintf(stderr,"KMS shader: %s\n",log); glDeleteShader(s); return 0; }
     return s;
 }
+/* WUP_EGL_OFFSCREEN_0886 */
+static int egl_fail(const char *stage) {
+    fprintf(stderr,"[capture] KMS EGL %s: error=0x%x\n",stage,(unsigned)eglGetError());
+    return -1;
+}
 static int egl_setup(wup_kms_t *k) {
+    char *node=drmGetRenderDeviceNameFromFd(k->fd);
+    if (!node) return fail("no render node for selected DRM device");
+    k->render_fd=open(node,O_RDWR|O_CLOEXEC);
+    fprintf(stderr,"[capture] KMS EGL render node %s: %s\n",node,k->render_fd<0?strerror(errno):"opened");
+    free(node);
+    if (k->render_fd<0) return -1;
+    k->render_gbm=gbm_create_device(k->render_fd);
+    if (!k->render_gbm) return fail("render-node GBM creation failed");
     PFNEGLGETPLATFORMDISPLAYEXTPROC get_display=(PFNEGLGETPLATFORMDISPLAYEXTPROC)eglGetProcAddress("eglGetPlatformDisplayEXT");
-    if(!get_display) return -1;
-    k->display=get_display(EGL_PLATFORM_GBM_KHR,k->gbm,NULL);
-    if(k->display==EGL_NO_DISPLAY || !eglInitialize(k->display,NULL,NULL) || !eglBindAPI(EGL_OPENGL_ES_API)) return -1;
+    if (!get_display) return egl_fail("get platform display entrypoint");
+    k->display=get_display(EGL_PLATFORM_GBM_KHR,k->render_gbm,NULL);
+    if (k->display==EGL_NO_DISPLAY) return egl_fail("get display");
+    EGLint major=0,minor=0;
+    if (!eglInitialize(k->display,&major,&minor)) return egl_fail("initialize");
+    fprintf(stderr,"[capture] KMS EGL %d.%d vendor=%s\n",major,minor,eglQueryString(k->display,EGL_VENDOR));
+    if (!eglBindAPI(EGL_OPENGL_ES_API)) return egl_fail("bind GLES");
     const char *ext=eglQueryString(k->display,EGL_EXTENSIONS);
-    if(!ext || !strstr(ext,"EGL_EXT_image_dma_buf_import")) return -1;
-    EGLint cfgattr[]={EGL_SURFACE_TYPE,EGL_PBUFFER_BIT,EGL_RENDERABLE_TYPE,EGL_OPENGL_ES2_BIT,EGL_RED_SIZE,8,EGL_GREEN_SIZE,8,EGL_BLUE_SIZE,8,EGL_ALPHA_SIZE,8,EGL_NONE};
+    if (!ext || !strstr(ext,"EGL_EXT_image_dma_buf_import") || !strstr(ext,"EGL_KHR_surfaceless_context"))
+        return fail("EGL DMA-BUF import or surfaceless context unavailable");
+    EGLint cfgattr[]={EGL_SURFACE_TYPE,0,EGL_RENDERABLE_TYPE,EGL_OPENGL_ES2_BIT,EGL_RED_SIZE,8,EGL_GREEN_SIZE,8,EGL_BLUE_SIZE,8,EGL_NONE};
     EGLConfig cfg; EGLint n=0;
-    if(!eglChooseConfig(k->display,cfgattr,&cfg,1,&n)||!n) return -1;
-    EGLint ctxattr[]={EGL_CONTEXT_CLIENT_VERSION,2,EGL_NONE}, surfattr[]={EGL_WIDTH,FW,EGL_HEIGHT,FH,EGL_NONE};
+    if (!eglChooseConfig(k->display,cfgattr,&cfg,1,&n)) return egl_fail("choose config");
+    if (!n) return fail("no GLES2 EGL config");
+    EGLint ctxattr[]={EGL_CONTEXT_CLIENT_VERSION,2,EGL_NONE};
     k->context=eglCreateContext(k->display,cfg,EGL_NO_CONTEXT,ctxattr);
-    k->surface=eglCreatePbufferSurface(k->display,cfg,surfattr);
-    if(k->context==EGL_NO_CONTEXT || k->surface==EGL_NO_SURFACE || !eglMakeCurrent(k->display,k->surface,k->surface,k->context)) return -1;
+    if (k->context==EGL_NO_CONTEXT) return egl_fail("create context");
+    if (!eglMakeCurrent(k->display,EGL_NO_SURFACE,EGL_NO_SURFACE,k->context)) return egl_fail("make surfaceless current");
+    fprintf(stderr,"[capture] KMS EGL renderer=%s\n",(const char *)glGetString(GL_RENDERER));
     k->create_image=(PFNEGLCREATEIMAGEKHRPROC)eglGetProcAddress("eglCreateImageKHR");
     k->destroy_image=(PFNEGLDESTROYIMAGEKHRPROC)eglGetProcAddress("eglDestroyImageKHR");
     k->bind_image=(PFNGLEGLIMAGETARGETTEXTURE2DOESPROC)eglGetProcAddress("glEGLImageTargetTexture2DOES");
     GLuint v=shader(GL_VERTEX_SHADER,"attribute vec2 pos; attribute vec2 uv; varying vec2 tex; void main(){gl_Position=vec4(pos,0.,1.);tex=uv;}");
     GLuint f=shader(GL_FRAGMENT_SHADER,"precision mediump float; varying vec2 tex; uniform sampler2D image; void main(){gl_FragColor=texture2D(image,tex).bgra;}");
-    int ok=0;
-    if(v&&f&&k->create_image&&k->destroy_image&&k->bind_image) {
+    GLint ok=0;
+    if (v && f && k->create_image && k->destroy_image && k->bind_image) {
         k->program=glCreateProgram(); glAttachShader(k->program,v); glAttachShader(k->program,f);
         glBindAttribLocation(k->program,0,"pos"); glBindAttribLocation(k->program,1,"uv"); glLinkProgram(k->program);
-        glGetProgramiv(k->program,GL_LINK_STATUS,&ok); glGenTextures(1,&k->texture);
+        glGetProgramiv(k->program,GL_LINK_STATUS,&ok);
+        if (!ok) { char log[512]={0}; glGetProgramInfoLog(k->program,sizeof log,NULL,log); fprintf(stderr,"[capture] KMS EGL link: %s\n",log); }
+        glGenTextures(1,&k->texture);
+        glGenTextures(1,&k->color); glBindTexture(GL_TEXTURE_2D,k->color);
+        glTexImage2D(GL_TEXTURE_2D,0,GL_RGBA,FW,FH,0,GL_RGBA,GL_UNSIGNED_BYTE,NULL);
+        glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER,GL_NEAREST);
+        glGenFramebuffers(1,&k->fbo); glBindFramebuffer(GL_FRAMEBUFFER,k->fbo);
+        glFramebufferTexture2D(GL_FRAMEBUFFER,GL_COLOR_ATTACHMENT0,GL_TEXTURE_2D,k->color,0);
+        GLenum status=glCheckFramebufferStatus(GL_FRAMEBUFFER), error=glGetError();
+        if (status!=GL_FRAMEBUFFER_COMPLETE || error!=GL_NO_ERROR) {
+            fprintf(stderr,"[capture] KMS EGL FBO status=0x%x GL error=0x%x\n",(unsigned)status,(unsigned)error); ok=0;
+        }
     }
     if (v) glDeleteShader(v);
     if (f) glDeleteShader(f);
-    eglMakeCurrent(k->display,EGL_NO_SURFACE,EGL_NO_SURFACE,EGL_NO_CONTEXT);
-    return ok?0:-1;
+    if (!eglMakeCurrent(k->display,EGL_NO_SURFACE,EGL_NO_SURFACE,EGL_NO_CONTEXT)) return egl_fail("release context");
+    return ok?0:fail("GLES shader, import entrypoint or FBO setup failed");
 }
 wup_kms_t *wup_kms_open(const char *output,int sw,int sh,int sx,int sy,int x,int y,int w,int h,int gpu) {
     if(sw<=0||sh<=0||x<0||y<0||w<=0||h<=0||x>sw-w||y>sh-h) return NULL;
     wup_kms_t *k=calloc(1,sizeof *k); if(!k) return NULL;
-    k->fd=-1;k->sw=sw;k->sh=sh;k->x=x;k->y=y;k->w=w;k->h=h;k->gpu=gpu;
+    k->render_fd=-1;k->fd=-1;k->sw=sw;k->sh=sh;k->x=x;k->y=y;k->w=w;k->h=h;k->gpu=gpu;
     k->screen_x=sx; k->screen_y=sy;
     glob_t paths={0};
     const char *forced=getenv("WUP_KMS_DEVICE");
@@ -228,7 +262,8 @@ int wup_kms_egl(wup_kms_t *k,unsigned char *out,int x,int y,int w,int h) {
     if(!k||!k->gpu) return -1;
     drmModeFB2 *fb=NULL;int prime[4], planes;
     if(export_frame(k,&fb,prime,&planes)) return -1;
-    if(!eglMakeCurrent(k->display,k->surface,k->surface,k->context)) {close_primes(prime);drmModeFreeFB2(fb);return fail("EGL make current failed");}
+    if(!eglMakeCurrent(k->display,EGL_NO_SURFACE,EGL_NO_SURFACE,k->context)) {close_primes(prime);drmModeFreeFB2(fb);return egl_fail("make current for frame");}
+    glBindFramebuffer(GL_FRAMEBUFFER,k->fbo);
     EGLint attrs[48]={EGL_WIDTH,(EGLint)fb->width,EGL_HEIGHT,(EGLint)fb->height,
         EGL_LINUX_DRM_FOURCC_EXT,(EGLint)fb->pixel_format};
     int n=6, ret=-1;
@@ -281,8 +316,10 @@ void wup_kms_close(wup_kms_t *k) {
     if(!k)return;
     wup_kms_release(k);
     if(k->display!=EGL_NO_DISPLAY) {
-        if(k->context!=EGL_NO_CONTEXT&&k->surface!=EGL_NO_SURFACE&&eglMakeCurrent(k->display,k->surface,k->surface,k->context)) {
+        if(k->context!=EGL_NO_CONTEXT&&eglMakeCurrent(k->display,EGL_NO_SURFACE,EGL_NO_SURFACE,k->context)) {
             if(k->texture)glDeleteTextures(1,&k->texture);
+            if(k->fbo)glDeleteFramebuffers(1,&k->fbo);
+            if(k->color)glDeleteTextures(1,&k->color);
             if(k->program)glDeleteProgram(k->program);
             eglMakeCurrent(k->display,EGL_NO_SURFACE,EGL_NO_SURFACE,EGL_NO_CONTEXT);
         }
@@ -290,6 +327,8 @@ void wup_kms_close(wup_kms_t *k) {
         if(k->context!=EGL_NO_CONTEXT)eglDestroyContext(k->display,k->context);
         eglTerminate(k->display);
     }
+    if(k->render_gbm)gbm_device_destroy(k->render_gbm);
+    if(k->render_fd>=0)close(k->render_fd);
     if(k->gbm)gbm_device_destroy(k->gbm);
     if(k->fd>=0)close(k->fd);
     free(k);
