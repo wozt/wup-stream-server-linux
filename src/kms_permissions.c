@@ -37,6 +37,7 @@ int kms_permissions_ready(void) {
 static void notice(GtkWindow *parent,const wup_i18n_t *tr,const char *message,const char *detail) {
     GtkWidget *d=gtk_message_dialog_new(parent,GTK_DIALOG_MODAL,GTK_MESSAGE_ERROR,GTK_BUTTONS_CLOSE,"%s",t(tr,message));
     if(detail && *detail) gtk_message_dialog_format_secondary_text(GTK_MESSAGE_DIALOG(d),"%s",detail);
+    gtk_style_context_add_class(gtk_widget_get_style_context(d), "wup-settings");
     gtk_dialog_run(GTK_DIALOG(d)); gtk_widget_destroy(d);
 }
 static int install_helper(GtkWindow *parent,const wup_i18n_t *tr,int force) {
@@ -54,6 +55,7 @@ static int install_helper(GtkWindow *parent,const wup_i18n_t *tr,int force) {
     gtk_message_dialog_format_secondary_text(GTK_MESSAGE_DIALOG(d),"%s",t(tr,"Install a privileged screen capture helper from this application? Only continue if you trust this build. Administrator authentication is required once. XCB does not require it."));
     gtk_dialog_add_buttons(GTK_DIALOG(d),t(tr,"Cancel"),GTK_RESPONSE_CANCEL,t(tr,"Install KMS helper"),GTK_RESPONSE_ACCEPT,NULL);
     gtk_dialog_set_default_response(GTK_DIALOG(d),GTK_RESPONSE_CANCEL);
+    gtk_style_context_add_class(gtk_widget_get_style_context(d), "wup-settings");
     int answer=gtk_dialog_run(GTK_DIALOG(d)); gtk_widget_destroy(d);
     if(answer!=GTK_RESPONSE_ACCEPT) {g_free(source);return 0;}
     gchar *bytes=NULL; gsize size=0; GError *error=NULL;
@@ -96,6 +98,7 @@ void kms_permissions_manage(GtkWindow *parent,const wup_i18n_t *tr) {
     gtk_dialog_add_buttons(GTK_DIALOG(d),t(tr,"Cancel"),GTK_RESPONSE_CANCEL,t(tr,"Install or update"),GTK_RESPONSE_ACCEPT,NULL);
     if(present) gtk_dialog_add_button(GTK_DIALOG(d),t(tr,"Remove KMS helper"),GTK_RESPONSE_REJECT);
     gtk_dialog_set_default_response(GTK_DIALOG(d),GTK_RESPONSE_CANCEL);
+    gtk_style_context_add_class(gtk_widget_get_style_context(d), "wup-settings");
     int answer=gtk_dialog_run(GTK_DIALOG(d)); gtk_widget_destroy(d);
     if(answer==GTK_RESPONSE_ACCEPT) { install_helper(parent,tr,1); return; }
     if(answer!=GTK_RESPONSE_REJECT) return;

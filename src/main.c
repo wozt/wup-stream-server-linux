@@ -65,6 +65,8 @@ int main(int argc, char **argv) {
     }
 
     settings_t *s = settings_load();
+    server_t *srv = server_new(s);
+    ui_t *ui = ui_new(s, srv);
     int kms_ready = 1;
     if (s->capture_backend >= 2 && !kms_permissions_ready()) {
         wup_i18n_t *tr = wup_i18n_new(s->language_id);

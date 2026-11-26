@@ -357,6 +357,12 @@ static void wup_apply_theme(ui_t *u) {
         "tooltip label, tooltip.background label, window.tooltip label { "
         "color:%s; padding:4px 7px; font-size:11px; }",
         panel,fg,border,fg);
+    /* Apply the same palette to application-owned GTK dialogs. */
+    g_string_append_printf(css,
+        "window.wup-settings.dialog, window.wup-settings.dialog.background, "
+        "window.wup-settings.dialog box, window.wup-settings.dialog .dialog-action-area { "
+        "background-color:%s; color:%s; }"
+        "window.wup-settings.dialog label { color:%s; }", bg,fg,fg);
     GError *err=NULL;
     gtk_css_provider_load_from_data(u->theme_css,css->str,-1,&err);
     if (err) {g_warning("Theme CSS: %s",err->message);g_clear_error(&err);}
@@ -1005,6 +1011,7 @@ static void on_kms_maintenance(GtkButton *b, ui_t *u) {
     (void)b;
     if (u->s->capture_backend >= 2) {
         GtkWidget *d=gtk_message_dialog_new(GTK_WINDOW(u->window),GTK_DIALOG_MODAL,GTK_MESSAGE_INFO,GTK_BUTTONS_CLOSE,"%s",wup_i18n_lookup(u->i18n,"Select an XCB backend and stop streaming before KMS maintenance."));
+        gtk_style_context_add_class(gtk_widget_get_style_context(d), "wup-settings");
         gtk_dialog_run(GTK_DIALOG(d)); gtk_widget_destroy(d); return;
     }
     kms_permissions_manage(GTK_WINDOW(u->window),u->i18n);
@@ -1015,6 +1022,7 @@ static GtkWidget *build_quality_section(ui_t *u) {
     gtk_grid_set_row_spacing(GTK_GRID(grid), 2);
     gtk_grid_set_column_spacing(GTK_GRID(grid), 8);
     gtk_box_pack_start(GTK_BOX(sec), grid, FALSE, FALSE, 0);
+    gtk_grid_set_column_spacing(GTK_GRID(grid), 6);
 
     /* Two rows instead of four. Preserve original callbacks and controls. */
     u->preset_combo = gtk_combo_box_text_new();
@@ -1055,17 +1063,17 @@ static GtkWidget *build_quality_section(ui_t *u) {
         "x264 zerolatency: no lookahead, no B-frames");
     gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(u->lowlat_chk), u->s->low_latency);
     g_signal_connect(u->lowlat_chk, "toggled", G_CALLBACK(on_lowlat_toggled), u);
-    gtk_box_pack_start(GTK_BOX(line), u->lowlat_chk, FALSE, FALSE, 0);
+    gtk_grid_attach(GTK_GRID(grid), u->lowlat_chk, 0, 2, 2, 1);
 
     GtkWidget *sbtn = gtk_button_new_with_label("Save preset");
     gtk_widget_set_tooltip_text(sbtn, "Save quality settings as a named preset");
     button_symbol(sbtn, "document-save-symbolic");
     g_signal_connect(sbtn, "clicked", G_CALLBACK(on_save_preset), u);
-    gtk_box_pack_end(GTK_BOX(line), sbtn, FALSE, FALSE, 0);
+    gtk_grid_attach(GTK_GRID(grid), sbtn, 3, 2, 1, 1);
     GtkWidget *kmsbtn=gtk_button_new_with_label("KMS helper");
     gtk_widget_set_tooltip_text(kmsbtn,"Install, update or remove the privileged KMS helper");
     g_signal_connect(kmsbtn,"clicked",G_CALLBACK(on_kms_maintenance),u);
-    gtk_box_pack_end(GTK_BOX(line),kmsbtn,FALSE,FALSE,0);
+    gtk_grid_attach(GTK_GRID(grid), kmsbtn, 2, 2, 1, 1);
     return frame_of(sec);
 }
 
