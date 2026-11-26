@@ -2,6 +2,12 @@
   "id": "fr",
   "name": "Français",
   "translations": {
+    "Enable DRM/KMS capture": "Activer la capture DRM/KMS",
+    "Install KMS helper": "Installer le module KMS",
+    "KMS installation unavailable": "Installation KMS indisponible",
+    "KMS installation failed": "Échec de l’installation KMS",
+    "Install a privileged screen capture helper from this application? Only continue if you trust this build. Administrator authentication is required once. XCB does not require it.": "Installer le module de capture privilégié fourni par cette application ? Continuez uniquement si vous faites confiance à cette version. Une authentification administrateur est nécessaire une seule fois. XCB ne la nécessite pas.",
+
     "Select the capture backend. DRM/KMS requires additional permissions; EGL scales on the GPU. No automatic fallback.": "Choisir la méthode de capture. DRM/KMS exige des permissions supplémentaires ; EGL redimensionne sur le GPU. Aucun repli automatique.",
     "Capture:": "Capture :",
     "GAMEPAD ONLY MODE": "MODE GAMEPAD UNIQUEMENT",

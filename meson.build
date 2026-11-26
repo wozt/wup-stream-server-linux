@@ -39,6 +39,7 @@ executable('wupstreamd',
   'src/x11util.c',
   'src/capture.c',
   'src/capture_kms.c',
+  'src/kms_permissions.c',
   'src/capture_async.c', # WUP_V912_CAPTURE_OPTIMIZATION
   'src/audio.c',
   'src/input.c',

@@ -25,6 +25,8 @@ APPDIR="$OUT/wupstreamd.AppDir"
 mkdir -p "$OUT"
 rm -rf "$APPDIR"
 install -Dm755 build/wupstreamd "$APPDIR/usr/bin/wupstreamd"
+# Unprivileged payload; installation requires explicit Polkit authentication.
+install -Dm755 build/wup-kms-helper "$APPDIR/usr/bin/wup-kms-helper"
 install -Dm644 data/wupstreamd.desktop "$APPDIR/usr/share/applications/wupstreamd.desktop"
 install -Dm644 data/wupstreamd.png "$APPDIR/usr/share/icons/hicolor/256x256/apps/wupstreamd.png"
 # WUP_V911_APPIMAGE_ASSETS: bundle every runtime data directory into the squashfs.

@@ -2,6 +2,7 @@
 #include "settings.h"
 #include "server.h"
 #include "ui.h"
+#include "kms_permissions.h"
 #include <gtk/gtk.h>
 #include <stdio.h>
 #include <string.h>
@@ -64,12 +65,18 @@ int main(int argc, char **argv) {
     }
 
     settings_t *s = settings_load();
+    int kms_ready = 1;
+    if (s->capture_backend >= 2 && !kms_permissions_ready()) {
+        wup_i18n_t *tr = wup_i18n_new(s->language_id);
+        kms_ready = kms_permissions_ensure(NULL,tr);
+        wup_i18n_free(tr);
+    }
     server_t *srv = server_new(s);
     ui_t *ui = ui_new(s, srv);
 
     ensure_autostart();
 
-    if (s->autostart_stream)
+    if (s->autostart_stream && kms_ready)
         server_request_stream(srv);
 
     gtk_main();

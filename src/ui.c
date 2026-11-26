@@ -2,6 +2,7 @@
 #define _GNU_SOURCE
 #include "ui.h"
 #include "x11util.h"
+#include "kms_permissions.h"
 #include "select.h"
 #include "window_pick.h"
 #include "input.h"
@@ -973,6 +974,12 @@ static void on_quality_spin(GtkSpinButton *sp, ui_t *u) {
 static void on_capture_backend_changed(GtkComboBox *cb, ui_t *u) {
     int mode = gtk_combo_box_get_active(cb);
     if (mode < 0 || mode > 3 || mode == u->s->capture_backend) return;
+    if (mode >= 2 && !kms_permissions_ensure(GTK_WINDOW(u->window),u->i18n)) {
+        g_signal_handlers_block_by_func(cb,G_CALLBACK(on_capture_backend_changed),u);
+        gtk_combo_box_set_active(cb,u->s->capture_backend);
+        g_signal_handlers_unblock_by_func(cb,G_CALLBACK(on_capture_backend_changed),u);
+        return;
+    }
     u->s->capture_backend = mode;
     commit_capture(u);
 }
