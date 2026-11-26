@@ -34,8 +34,16 @@ int kms_permissions_ready(void) {
         !strcmp(g_strstrip(out),KMS_HELPER_VERSION);
     g_free(out); return ready;
 }
+
+static void theme_dialog(GtkWidget *d) {
+    GtkStyleContext *ctx = gtk_widget_get_style_context(d);
+    gtk_style_context_add_class(ctx, "wup-settings");
+    gtk_widget_set_name(d, "wup-settings");
+}
+
 static void notice(GtkWindow *parent,const wup_i18n_t *tr,const char *message,const char *detail) {
     GtkWidget *d=gtk_message_dialog_new(parent,GTK_DIALOG_MODAL,GTK_MESSAGE_ERROR,GTK_BUTTONS_CLOSE,"%s",t(tr,message));
+    theme_dialog(d);
     if(detail && *detail) gtk_message_dialog_format_secondary_text(GTK_MESSAGE_DIALOG(d),"%s",detail);
     gtk_style_context_add_class(gtk_widget_get_style_context(d), "wup-settings");
     gtk_dialog_run(GTK_DIALOG(d)); gtk_widget_destroy(d);
@@ -52,6 +60,7 @@ static int install_helper(GtkWindow *parent,const wup_i18n_t *tr,int force) {
         g_free(source); return 0;
     }
     GtkWidget *d=gtk_message_dialog_new(parent,GTK_DIALOG_MODAL,GTK_MESSAGE_QUESTION,GTK_BUTTONS_NONE,"%s",t(tr,installed_permissions_ready()?"Update KMS helper":"Enable DRM/KMS capture"));
+    theme_dialog(d);
     gtk_message_dialog_format_secondary_text(GTK_MESSAGE_DIALOG(d),"%s",t(tr,"Install a privileged screen capture helper from this application? Only continue if you trust this build. Administrator authentication is required once. XCB does not require it."));
     gtk_dialog_add_buttons(GTK_DIALOG(d),t(tr,"Cancel"),GTK_RESPONSE_CANCEL,t(tr,"Install KMS helper"),GTK_RESPONSE_ACCEPT,NULL);
     gtk_dialog_set_default_response(GTK_DIALOG(d),GTK_RESPONSE_CANCEL);
@@ -94,6 +103,7 @@ int kms_permissions_ensure(GtkWindow *parent,const wup_i18n_t *tr) {
 void kms_permissions_manage(GtkWindow *parent,const wup_i18n_t *tr) {
     int present=g_file_test(KMS_HELPER_PATH,G_FILE_TEST_EXISTS);
     GtkWidget *d=gtk_message_dialog_new(parent,GTK_DIALOG_MODAL,GTK_MESSAGE_QUESTION,GTK_BUTTONS_NONE,"%s",t(tr,"KMS helper maintenance"));
+    theme_dialog(d);
     gtk_message_dialog_format_secondary_text(GTK_MESSAGE_DIALOG(d),"%s",t(tr,"Install or update the privileged helper, or remove it. Stop all KMS streams before maintenance. Removal prevents new helper launches; existing processes must be stopped separately."));
     gtk_dialog_add_buttons(GTK_DIALOG(d),t(tr,"Cancel"),GTK_RESPONSE_CANCEL,t(tr,"Install or update"),GTK_RESPONSE_ACCEPT,NULL);
     if(present) gtk_dialog_add_button(GTK_DIALOG(d),t(tr,"Remove KMS helper"),GTK_RESPONSE_REJECT);

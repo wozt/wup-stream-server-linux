@@ -256,8 +256,20 @@ static void wup_apply_theme(ui_t *u) {
         "margin:1px; padding:2px; }"
         ".wup-settings .wup-section-title { color:%s; font-weight:bold; padding:0 3px 0 0; }"
         ".wup-settings label { color:%s; padding:0; }"
-        ".wup-settings label:disabled { color:%s; }",
-        bg,fg,panel,border,accent,fg,muted);
+        ".wup-settings label:disabled { color:%s; }"
+        ".wup-settings headerbar, .wup-settings .titlebar, "
+        "window.wup-settings headerbar, window.wup-settings .titlebar { "
+        "background-image:none; background-color:%s; color:%s; "
+        "border-color:%s; box-shadow:none; }"
+        ".wup-settings headerbar title, .wup-settings headerbar label, "
+        ".wup-settings .titlebar label { color:%s; }"
+        ".wup-settings headerbar button, .wup-settings .titlebar button, "
+        "window.wup-settings headerbar button, window.wup-settings .titlebar button { "
+        "background-image:none; background-color:%s; color:%s; border:1px solid %s; }"
+        ".wup-settings headerbar button:hover, .wup-settings .titlebar button:hover { "
+        "background-color:%s; border-color:%s; }",
+        bg,fg,panel,border,accent,fg,muted,
+        panel,fg,border,fg,button,fg,border,hover,accent);
     g_string_append_printf(css,
         ".wup-settings button { min-height:17px; padding:1px 6px; border:1px solid %s; "
         "border-radius:5px; background-image:none; background-color:%s; color:%s; }"
@@ -1011,6 +1023,8 @@ static void on_kms_maintenance(GtkButton *b, ui_t *u) {
     (void)b;
     if (u->s->capture_backend >= 2) {
         GtkWidget *d=gtk_message_dialog_new(GTK_WINDOW(u->window),GTK_DIALOG_MODAL,GTK_MESSAGE_INFO,GTK_BUTTONS_CLOSE,"%s",wup_i18n_lookup(u->i18n,"Select an XCB backend and stop streaming before KMS maintenance."));
+        gtk_style_context_add_class(gtk_widget_get_style_context(d), "wup-settings");
+        gtk_widget_set_name(d, "wup-settings");
         gtk_style_context_add_class(gtk_widget_get_style_context(d), "wup-settings");
         gtk_dialog_run(GTK_DIALOG(d)); gtk_widget_destroy(d); return;
     }
