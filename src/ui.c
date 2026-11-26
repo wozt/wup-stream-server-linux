@@ -378,6 +378,14 @@ static void wup_apply_theme(ui_t *u) {
     g_string_append_printf(css,
         "window.wup-kms-dialog { background-image:none; background-color:%s; "
         "color:%s; border:1px solid %s; border-radius:6px; }", bg,fg,border);
+    /* WUP_BRIGHTNESS_THEME: use the selected JSON palette, not GTK's accent. */
+    g_string_append_printf(css,
+        ".wup-settings scale.wup-brightness trough { min-height:5px; background-image:none; background-color:%s; border:1px solid %s; border-radius:4px; box-shadow:none; }"
+        ".wup-settings scale.wup-brightness highlight { background-image:none; background-color:%s; border-color:%s; box-shadow:none; }"
+        ".wup-settings scale.wup-brightness slider { min-width:12px; min-height:12px; margin:-4px; background-image:none; background-color:%s; border:1px solid %s; border-radius:50%%; box-shadow:none; }"
+        ".wup-settings scale.wup-brightness slider:hover { background-color:%s; border-color:%s; }"
+        ".wup-settings scale.wup-brightness value { color:%s; }",
+        entry,border,accent,accent,fg,border,hover,accent,fg);
     GError *err=NULL;
     gtk_css_provider_load_from_data(u->theme_css,css->str,-1,&err);
     if (err) {g_warning("Theme CSS: %s",err->message);g_clear_error(&err);}
@@ -1524,6 +1532,7 @@ static GtkWidget *build_input_section(ui_t *u) {
     gtk_box_pack_start(GTK_BOX(left), mrow, TRUE, TRUE, 0);
     gtk_box_pack_start(GTK_BOX(right), mk_label("Brightness:"), FALSE, FALSE, 0);
     GtkWidget *brightness = gtk_scale_new_with_range(GTK_ORIENTATION_HORIZONTAL, 1, 6, 1);
+    gtk_style_context_add_class(gtk_widget_get_style_context(brightness), "wup-brightness");
     gtk_scale_set_digits(GTK_SCALE(brightness), 0);
     gtk_scale_set_value_pos(GTK_SCALE(brightness), GTK_POS_RIGHT);
     gtk_widget_set_size_request(brightness, 115, -1);
