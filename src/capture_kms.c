@@ -118,7 +118,8 @@ static int egl_setup(wup_kms_t *k) {
         glBindAttribLocation(k->program,0,"pos"); glBindAttribLocation(k->program,1,"uv"); glLinkProgram(k->program);
         glGetProgramiv(k->program,GL_LINK_STATUS,&ok); glGenTextures(1,&k->texture);
     }
-    if(v) glDeleteShader(v); if(f) glDeleteShader(f);
+    if (v) glDeleteShader(v);
+    if (f) glDeleteShader(f);
     eglMakeCurrent(k->display,EGL_NO_SURFACE,EGL_NO_SURFACE,EGL_NO_CONTEXT);
     return ok?0:-1;
 }
