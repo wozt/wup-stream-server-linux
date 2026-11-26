@@ -26,7 +26,9 @@ mkdir -p "$OUT"
 rm -rf "$APPDIR"
 install -Dm755 build/wupstreamd "$APPDIR/usr/bin/wupstreamd"
 # Unprivileged payload; installation requires explicit Polkit authentication.
-install -Dm755 build/wup-kms-helper "$APPDIR/usr/bin/wup-kms-helper"
+# Keep privileged payload out of linuxdeploy ELF rewriting.
+base64 build/wup-kms-helper > "$APPDIR/usr/bin/wup-kms-helper.b64"
+chmod 0644 "$APPDIR/usr/bin/wup-kms-helper.b64"
 install -Dm644 data/wupstreamd.desktop "$APPDIR/usr/share/applications/wupstreamd.desktop"
 install -Dm644 data/wupstreamd.png "$APPDIR/usr/share/icons/hicolor/256x256/apps/wupstreamd.png"
 # WUP_V911_APPIMAGE_ASSETS: bundle every runtime data directory into the squashfs.
@@ -54,7 +56,17 @@ chmod -R a+rX "$APPDIR"
 # linuxdeploy collects non-system runtime dependencies of the binary.
 # Use no GTK plugin by default: the GTK plugin can be supplied via env when installed.
 export OUTPUT="${OUTPUT:-$OUT/wupstreamd-x86_64.AppImage}"
-"$LD" --appdir "$APPDIR" \
+# Keep the host GLVND/Mesa stack and GLib module ABI coherent.
+exclude=()
+for pattern in 'libEGL*.so*' 'libGLES*.so*' 'libGL*.so*' 'libgbm.so*' \
+    'libdrm*.so*' 'libglapi.so*' 'libLLVM*.so*' 'libvulkan*.so*' \
+    'libwayland-*.so*' 'libxcb*.so*' 'libxkbcommon*.so*' \
+    'libglib-2.0.so*' 'libgio-2.0.so*' 'libgobject-2.0.so*' \
+    'libgmodule-2.0.so*' 'libgthread-2.0.so*' 'libffi.so*' 'libpcre2-*.so*' \
+    'libstdc++.so*' 'libgcc_s.so*' 'libzstd.so*' 'libexpat.so*'; do
+  exclude+=("--exclude-library=$pattern")
+done
+"$LD" "${exclude[@]}" --appdir "$APPDIR" \
    --executable "$APPDIR/usr/bin/wupstreamd" \
    --desktop-file "$APPDIR/usr/share/applications/wupstreamd.desktop" \
    --icon-file "$APPDIR/usr/share/icons/hicolor/256x256/apps/wupstreamd.png" \

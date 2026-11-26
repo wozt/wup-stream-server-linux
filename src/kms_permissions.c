@@ -11,6 +11,18 @@
 static const char *t(const wup_i18n_t *tr,const char *s) {
     return tr ? wup_i18n_lookup(tr,s) : s;
 }
+/* Host tools must not inherit the AppImage library search path. */
+static gchar **host_env(void) {
+    gchar **env=g_get_environ();
+    const char *names[]={"LD_LIBRARY_PATH","LD_PRELOAD","LD_AUDIT","GIO_EXTRA_MODULES","GIO_MODULE_DIR","GTK_PATH","GTK_IM_MODULE_FILE","GDK_PIXBUF_MODULE_FILE",NULL};
+    for(int i=0;names[i];i++) env=g_environ_unsetenv(env,names[i]);
+    return env;
+}
+static gboolean host_spawn(gchar **argv,gchar **out,gchar **err,gint *status,GError **error) {
+    gchar **env=host_env();
+    gboolean ok=g_spawn_sync(NULL,argv,env,0,NULL,NULL,out,err,status,error);
+    g_strfreev(env);return ok;
+}
 static int installed_permissions_ready(void) {
     struct stat st;
     if (lstat(KMS_HELPER_PATH,&st) || !S_ISREG(st.st_mode) || st.st_uid!=0 ||
@@ -19,7 +31,7 @@ static int installed_permissions_ready(void) {
         "/usr/sbin/getcap":"/sbin/getcap";
     gchar *argv[]={(gchar *)captool,(gchar *)KMS_HELPER_PATH,NULL};
     gchar *out=NULL; gint status=0;
-    gboolean ok=g_spawn_sync(NULL,argv,NULL,0,NULL,NULL,&out,NULL,&status,NULL);
+    gboolean ok=host_spawn(argv,&out,NULL,&status,NULL);
     gchar *expected=g_strconcat(KMS_HELPER_PATH," cap_sys_admin=ep",NULL);
     int ready=ok && g_spawn_check_wait_status(status,NULL) && out &&
         !strcmp(g_strstrip(out),expected);
@@ -29,7 +41,7 @@ int kms_permissions_ready(void) {
     if (!installed_permissions_ready()) return 0;
     gchar *argv[]={(gchar *)KMS_HELPER_PATH,"--version",NULL};
     gchar *out=NULL; gint status=0;
-    gboolean ok=g_spawn_sync(NULL,argv,NULL,0,NULL,NULL,&out,NULL,&status,NULL);
+    gboolean ok=host_spawn(argv,&out,NULL,&status,NULL);
     int ready=ok && g_spawn_check_wait_status(status,NULL) && out &&
         !strcmp(g_strstrip(out),KMS_HELPER_VERSION);
     g_free(out); return ready;
@@ -58,6 +70,11 @@ static int install_helper(GtkWindow *parent,const wup_i18n_t *tr,int force) {
     gchar *dir=exe?g_path_get_dirname(exe):NULL;
     gchar *source=dir?g_build_filename(dir,"wup-kms-helper",NULL):NULL;
     g_free(dir); g_free(exe);
+    int encoded=0;
+    if(source && !g_file_test(source,G_FILE_TEST_IS_REGULAR)) {
+        gchar *payload=g_strconcat(source,".b64",NULL);
+        g_free(source);source=payload;encoded=1;
+    }
     if(!source || !g_file_test(source,G_FILE_TEST_IS_REGULAR) ||
        !g_file_test("/usr/bin/pkexec",G_FILE_TEST_IS_EXECUTABLE)) {
         notice(parent,tr,"KMS installation unavailable","Missing bundled helper or /usr/bin/pkexec.");
@@ -75,6 +92,22 @@ static int install_helper(GtkWindow *parent,const wup_i18n_t *tr,int force) {
     if(!g_file_get_contents(source,&bytes,&size,&error)) {
         notice(parent,tr,"KMS installation failed",error?error->message:NULL);
         g_clear_error(&error);g_free(source);return 0;
+    }
+    if(encoded) {
+        gsize decoded_size=0;
+        guchar *decoded=g_base64_decode(bytes,&decoded_size);
+        g_free(bytes);bytes=(gchar *)decoded;size=decoded_size;
+    }
+    /* FUSE mounts are not necessarily accessible to the authenticated root
+     * process. Stage the exact native ELF in a private normal directory. */
+    gchar *stage=g_dir_make_tmp("wup-kms-install-XXXXXX",&error);
+    gchar *staged=stage?g_build_filename(stage,"wup-kms-helper",NULL):NULL;
+    if(!staged || size<4 || memcmp(bytes,"\177ELF",4) ||
+       !g_file_set_contents(staged,bytes,size,&error)) {
+        notice(parent,tr,"KMS installation failed",error?error->message:"Invalid helper payload");
+        if(staged) g_unlink(staged);
+        if(stage) g_rmdir(stage);
+        g_free(staged);g_free(stage);g_free(bytes);g_free(source);g_clear_error(&error);return 0;
     }
     gchar *digest=g_compute_checksum_for_data(G_CHECKSUM_SHA256,(const guchar *)bytes,size);
     g_free(bytes);
@@ -94,9 +127,10 @@ static int install_helper(GtkWindow *parent,const wup_i18n_t *tr,int force) {
         "/usr/sbin/setcap cap_sys_admin+ep \"$tmp\"; "
         "/usr/bin/mv -fT -- \"$tmp\" \"$d/wup-kms-helper\"; "
         "trap - EXIT";
-    gchar *argv[]={"/usr/bin/pkexec","/bin/sh","-c",(gchar *)script,"wup-kms-install",source,digest,NULL};
+    gchar *argv[]={"/usr/bin/pkexec","/bin/sh","-c",(gchar *)script,"wup-kms-install",staged,digest,NULL};
     gint status=0; gchar *err=NULL;
-    gboolean ok=g_spawn_sync(NULL,argv,NULL,0,NULL,NULL,NULL,&err,&status,&error);
+    gboolean ok=host_spawn(argv,NULL,&err,&status,&error);
+    g_unlink(staged);g_rmdir(stage);g_free(staged);g_free(stage);
     int ready=ok && g_spawn_check_wait_status(status,NULL) && kms_permissions_ready();
     if(!ready) notice(parent,tr,"KMS installation failed",error?error->message:err);
     g_clear_error(&error);g_free(err);g_free(digest);g_free(source);return ready;
@@ -123,7 +157,7 @@ void kms_permissions_manage(GtkWindow *parent,const wup_i18n_t *tr) {
         "/usr/bin/rm -f -- /usr/local/libexec/wupstreamd/wup-kms-helper";
     gchar *argv[]={"/usr/bin/pkexec","/bin/sh","-c",(gchar *)script,NULL};
     gint status=0; gchar *err=NULL; GError *error=NULL;
-    gboolean ok=g_spawn_sync(NULL,argv,NULL,0,NULL,NULL,NULL,&err,&status,&error);
+    gboolean ok=host_spawn(argv,NULL,&err,&status,&error);
     if(!ok || !g_spawn_check_wait_status(status,NULL) || g_file_test(KMS_HELPER_PATH,G_FILE_TEST_EXISTS))
         notice(parent,tr,"KMS removal failed",error?error->message:err);
     g_clear_error(&error);g_free(err);
