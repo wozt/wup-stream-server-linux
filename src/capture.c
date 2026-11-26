@@ -61,52 +61,56 @@ static void shm_cleanup(capture_t *c) {
     c->shmaddr = NULL; c->shmid = -1; c->use_shm = 0; c->shmseg = 0;
 }
 
+/* WUP_STRICT_CAPTURE_BACKEND: never silently change capture method. */
 static int setup_image(capture_t *c) {
     int w = c->src_w, h = c->src_h;
-    if (w <= 0 || h <= 0 || w > INT_MAX / 4 ||
-        (size_t)w > (SIZE_MAX - 4096) / 4 / (size_t)h) return -1;
+    const char *reason = "invalid capture geometry";
+    if (w <= 0 || h <= 0 || w > UINT16_MAX || h > UINT16_MAX ||
+        c->cap_x < INT16_MIN || c->cap_x > INT16_MAX ||
+        c->cap_y < INT16_MIN || c->cap_y > INT16_MAX ||
+        (size_t)w > (SIZE_MAX - 4096) / 4 / (size_t)h) goto error;
     c->use_shm = 0;
     c->shmaddr = NULL; c->shmid = -1; c->shmseg = 0;
-
-    /* get the xcb connection bound to the same Xlib display so XIDs match */
     c->xcb = XGetXCBConnection(c->dpy);
-    if (!c->xcb) return c->capture_backend == 1 ? -1 : 0;
-    /* Explicit GetImage mode never allocates or attaches MIT-SHM. */
-    if (c->capture_backend == 1) return 0;
-
-    /* check MIT-SHM presence */
-    xcb_query_extension_cookie_t eck =
-        xcb_query_extension(c->xcb, 7, "MIT-SHM");
-    const xcb_query_extension_reply_t *ext =
-        xcb_query_extension_reply(c->xcb, eck, NULL);
-    if (!ext || !ext->present) { free((void *)ext); return 0; }
-
-    size_t need = (size_t)w * h * 4 + 4096;
-    c->shmid = shmget(IPC_PRIVATE, need, IPC_CREAT | 0600);
-    if (c->shmid < 0) { free((void *)ext); return 0; }
-    c->shmaddr = shmat(c->shmid, NULL, 0);
-    if (c->shmaddr == (void *)-1) {
-        shmctl(c->shmid, IPC_RMID, NULL);
-        c->shmid = -1; c->shmaddr = NULL;
-        free((void *)ext);
+    reason = "XCB connection unavailable";
+    if (!c->xcb || xcb_connection_has_error(c->xcb)) goto error;
+    if (c->capture_backend == 1) {
+        fprintf(stderr, "[capture] XCB GetImage selected (no fallback)\n");
         return 0;
     }
+    reason = "invalid backend selection";
+    if (c->capture_backend != 0) goto error;
+    const xcb_query_extension_reply_t *ext =
+        xcb_get_extension_data(c->xcb, &xcb_shm_id);
+    reason = "MIT-SHM extension unavailable";
+    if (!ext || !ext->present) goto error;
+    size_t need = (size_t)w * h * 4 + 4096;
+    c->shmid = shmget(IPC_PRIVATE, need, IPC_CREAT | 0600);
+    reason = "shmget failed";
+    if (c->shmid < 0) goto error;
+    c->shmaddr = shmat(c->shmid, NULL, 0);
+    reason = "shmat failed";
+    if (c->shmaddr == (void *)-1) goto error;
     c->shmseg = xcb_generate_id(c->xcb);
-    xcb_void_cookie_t ck = xcb_shm_attach(c->xcb, c->shmseg, c->shmid, 0);
-    if (xcb_request_check(c->xcb, ck) != NULL) goto fail;
-    free((void *)ext);
+    xcb_void_cookie_t ck = xcb_shm_attach_checked(c->xcb, c->shmseg, c->shmid, 0);
+    xcb_generic_error_t *err = xcb_request_check(c->xcb, ck);
+    if (err) {
+        fprintf(stderr, "[capture] MIT-SHM attach X11 error %u\n", (unsigned)err->error_code);
+        free(err);
+        reason = "MIT-SHM attach rejected";
+        goto error;
+    }
+    reason = "XCB connection lost during MIT-SHM attach";
+    if (xcb_connection_has_error(c->xcb)) goto error;
     c->shm_size = need;
     c->use_shm = 1;
-    if (getenv("WUPSTREAMD_DEBUG"))
-        fprintf(stderr, "xcb shm: shmid=%d seg=0x%x addr=%p %dx%d\n",
-                c->shmid, c->shmseg, c->shmaddr, w, h);
+    fprintf(stderr, "[capture] XCB MIT-SHM attached successfully (no fallback)\n");
     return 0;
-
-fail:
-    shmdt(c->shmaddr); shmctl(c->shmid, IPC_RMID, NULL);
-    c->shmid = -1; c->shmaddr = NULL;
-    free((void *)ext);
-    return 0;
+error:
+    fprintf(stderr, "[capture] backend %d failed: %s (no fallback)\n",
+            c->capture_backend, reason);
+    shm_cleanup(c);
+    return -1;
 }
 
 static void teardown_image(capture_t *c) {
@@ -178,11 +182,11 @@ fail:
 int capture_grab(capture_t *c, unsigned char *out) {
     const uint8_t *src_data;
     int src_stride;
-    XImage *tmp_img = NULL;
     xcb_get_image_reply_t *xcb_img = NULL;
     double x11_beg = capture_seconds();
 
-    if (c->use_shm) {
+    if (c->capture_backend == 0) {
+        if (!c->use_shm) return -1;
         /* XCB MIT-SHM get_image: pixels land directly in our shm segment */
         xcb_shm_get_image_cookie_t ck = xcb_shm_get_image(
             c->xcb, c->drawable, c->cap_x, c->cap_y,
@@ -190,8 +194,10 @@ int capture_grab(capture_t *c, unsigned char *out) {
             XCB_IMAGE_FORMAT_Z_PIXMAP, c->shmseg, 0);
         xcb_generic_error_t *gerr = NULL;
         xcb_shm_get_image_reply_t *rep = xcb_shm_get_image_reply(c->xcb, ck, &gerr);
-        if (!rep) {
-            if (gerr) free(gerr);
+        if (gerr || !rep) {
+            fprintf(stderr, "[capture] MIT-SHM get_image failed (X11 error %u)\n",
+                    gerr ? (unsigned)gerr->error_code : 0u);
+            free(gerr); free(rep);
             return -1;
         }
         free(rep);
@@ -212,6 +218,8 @@ int capture_grab(capture_t *c, unsigned char *out) {
         xcb_generic_error_t *err = NULL;
         xcb_img = xcb_get_image_reply(c->xcb, ck, &err);
         if (err || !xcb_img) {
+            fprintf(stderr, "[capture] XCB GetImage failed (X11 error %u)\n",
+                    err ? (unsigned)err->error_code : 0u);
             free(err); free(xcb_img); return -1;
         }
         /* Existing scaler expects little-endian BGR0, four bytes per pixel. */
@@ -232,11 +240,7 @@ int capture_grab(capture_t *c, unsigned char *out) {
         src_data = xcb_get_image_data(xcb_img);
         src_stride = c->src_w * 4;
     } else {
-        tmp_img = XGetImage(c->dpy, c->drawable, c->cap_x, c->cap_y,
-                            c->src_w, c->src_h, AllPlanes, ZPixmap);
-        if (!tmp_img) return -1;
-        src_data = (const uint8_t *)tmp_img->data;
-        src_stride = tmp_img->bytes_per_line;
+        return -1;
     }
 
     c->last_x11_ms = (capture_seconds() - x11_beg) * 1000.0;
@@ -253,7 +257,6 @@ int capture_grab(capture_t *c, unsigned char *out) {
     int dst_strides[4] = { (c->aspect == ASPECT_CROP ? c->tmp_w : FW) * 4, 0, 0, 0 };
     int scaled = sws_scale(c->sws, (const uint8_t *const *)src_planes, src_strides,
                            0, c->src_h, dst_planes, dst_strides);
-    if (tmp_img) XDestroyImage(tmp_img);
     free(xcb_img);
     if (scaled != c->tmp_h) return -1;
     if (c->aspect == ASPECT_CROP) {
