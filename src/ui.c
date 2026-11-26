@@ -1824,6 +1824,11 @@ static void on_ip_changed(GtkEntry *e, ui_t *u) {
     commit_reconnect(u);
 }
 
+static void on_auto_reconnect_toggled(GtkToggleButton *tb, ui_t *u) {
+    u->s->auto_reconnect = gtk_toggle_button_get_active(tb);
+    commit_live(u);
+}
+
 static void on_autostart_toggled(GtkToggleButton *tb, ui_t *u) {
     u->s->autostart_stream = gtk_toggle_button_get_active(tb);
     commit_live(u);
@@ -1874,6 +1879,11 @@ static GtkWidget *build_conn_section(ui_t *u) {
                                  u->s->autostart_stream);
     g_signal_connect(u->autostart_chk, "toggled", G_CALLBACK(on_autostart_toggled), u);
     gtk_box_pack_start(GTK_BOX(line1), u->autostart_chk, FALSE, FALSE, 0);
+    GtkWidget *reconnect_chk = wup_compact_check("Auto-reconnect");
+    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(reconnect_chk), u->s->auto_reconnect);
+    gtk_widget_set_tooltip_text(reconnect_chk, "Reconnect after an unexpected stream loss");
+    g_signal_connect(reconnect_chk, "toggled", G_CALLBACK(on_auto_reconnect_toggled), u);
+    gtk_box_pack_start(GTK_BOX(line1), reconnect_chk, FALSE, FALSE, 0);
 
     GtkWidget *line2 = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
     gtk_box_pack_start(GTK_BOX(sec), line2, FALSE, FALSE, 0);

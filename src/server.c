@@ -541,10 +541,22 @@ static void *server_thread(void *arg) {
         wupstream_close(pad);
 
         if (lost) {
-            /* pad powered off / link dropped: stop the stream cleanly instead
-               of spinning in a reconnect loop */
+            pthread_mutex_lock(&srv->mtx);
+            int retry = srv->staged_settings.auto_reconnect && srv->want_stream;
+            if (!retry) srv->want_stream = 0;
+            pthread_mutex_unlock(&srv->mtx);
+            if (retry) {
+                srv->state = SRV_WAITING_PAD;
+                set_status(srv, "GamePad disconnected - reconnecting");
+                for (int i = 0; i < 20 && srv->running && srv->want_stream; ++i) {
+                    pthread_mutex_lock(&srv->mtx);
+                    if (!srv->staged_settings.auto_reconnect) srv->want_stream = 0;
+                    pthread_mutex_unlock(&srv->mtx);
+                    usleep(100000);
+                }
+                continue;
+            }
             set_status(srv, "GamePad disconnected - stream stopped");
-            srv->want_stream = 0;
         } else {
             set_status(srv, "stopped");
         }

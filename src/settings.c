@@ -124,6 +124,7 @@ settings_t *settings_load(void) {
     s->gamepad_only_black = json_int(root, "gamepad_only_black", 0);
     json_str(root, "audio_monitor", s->audio_monitor, sizeof s->audio_monitor);
     s->autostart_stream = json_int(root, "autostart_stream", 0);
+    s->auto_reconnect = !!json_int(root, "auto_reconnect", 0);
     s->ui_theme = json_int(root, "ui_theme", s->ui_theme);
     if (s->ui_theme < 0 || s->ui_theme >= 5) s->ui_theme = 2;
     /* Existing users keep their selected V4 color on first V5 launch. */
@@ -237,6 +238,7 @@ void settings_save(settings_t *s) {
     json_object_set_int_member(root, "gamepad_only_black", s->gamepad_only_black);
     json_object_set_string_member(root, "audio_monitor", s->audio_monitor);
     json_object_set_int_member(root, "autostart_stream", s->autostart_stream);
+    json_object_set_int_member(root, "auto_reconnect", s->auto_reconnect);
     json_object_set_string_member(root,"theme_id",s->theme_id);
     json_object_set_string_member(root,"language_id",s->language_id);
 
