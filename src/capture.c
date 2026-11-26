@@ -188,7 +188,7 @@ int capture_start(capture_t *c, const settings_t *s) {
         }
         if (found < 0) goto fail;
         screen_t *sc = &screens[found];
-        c->kms = wup_kms_open(sc->name, sc->w, sc->h,
+        c->kms = wup_kms_open(sc->name, sc->w, sc->h, sc->x, sc->y,
                              c->cap_x-sc->x, c->cap_y-sc->y,
                              c->src_w, c->src_h, c->capture_backend == 3);
         if (!c->kms || (c->capture_backend == 2 && setup_scaler(c) != 0)) goto fail;
