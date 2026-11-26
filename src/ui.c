@@ -1001,6 +1001,14 @@ static void on_save_preset(GtkButton *b, ui_t *u) {
     commit_live(u);
 }
 
+static void on_kms_maintenance(GtkButton *b, ui_t *u) {
+    (void)b;
+    if (u->s->capture_backend >= 2) {
+        GtkWidget *d=gtk_message_dialog_new(GTK_WINDOW(u->window),GTK_DIALOG_MODAL,GTK_MESSAGE_INFO,GTK_BUTTONS_CLOSE,"%s",wup_i18n_lookup(u->i18n,"Select an XCB backend and stop streaming before KMS maintenance."));
+        gtk_dialog_run(GTK_DIALOG(d)); gtk_widget_destroy(d); return;
+    }
+    kms_permissions_manage(GTK_WINDOW(u->window),u->i18n);
+}
 static GtkWidget *build_quality_section(ui_t *u) {
     GtkWidget *sec = mk_section("Quality");
     GtkWidget *grid = gtk_grid_new();
@@ -1054,6 +1062,10 @@ static GtkWidget *build_quality_section(ui_t *u) {
     button_symbol(sbtn, "document-save-symbolic");
     g_signal_connect(sbtn, "clicked", G_CALLBACK(on_save_preset), u);
     gtk_box_pack_end(GTK_BOX(line), sbtn, FALSE, FALSE, 0);
+    GtkWidget *kmsbtn=gtk_button_new_with_label("KMS helper");
+    gtk_widget_set_tooltip_text(kmsbtn,"Install, update or remove the privileged KMS helper");
+    g_signal_connect(kmsbtn,"clicked",G_CALLBACK(on_kms_maintenance),u);
+    gtk_box_pack_end(GTK_BOX(line),kmsbtn,FALSE,FALSE,0);
     return frame_of(sec);
 }
 

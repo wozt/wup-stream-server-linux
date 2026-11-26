@@ -9,9 +9,15 @@
 #include <string.h>
 #include <errno.h>
 #include <stdlib.h>
+#include <stdio.h>
 /* Private inherited seqpacket socket and caller-opened primary DRM node.
  * No filesystem paths, shell commands, arbitrary framebuffer IDs or DRM writes. */
-int main(void) {
+int main(int argc, char **argv) {
+    if (argc == 2 && !strcmp(argv[1], "--version")) {
+        puts(KMS_HELPER_VERSION);
+        return 0;
+    }
+    if (argc != 1) return 1;
     const int sock=3, card=4;
     int type=0; socklen_t len=sizeof type;
     if (getuid()==0 || getsockopt(sock,SOL_SOCKET,SO_TYPE,&type,&len) ||

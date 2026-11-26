@@ -11,7 +11,7 @@
 static const char *t(const wup_i18n_t *tr,const char *s) {
     return tr ? wup_i18n_lookup(tr,s) : s;
 }
-int kms_permissions_ready(void) {
+static int installed_permissions_ready(void) {
     struct stat st;
     if (lstat(KMS_HELPER_PATH,&st) || !S_ISREG(st.st_mode) || st.st_uid!=0 ||
         (st.st_mode & 0022) || access(KMS_HELPER_PATH,X_OK)) return 0;
@@ -25,13 +25,22 @@ int kms_permissions_ready(void) {
         !strcmp(g_strstrip(out),expected);
     g_free(expected); g_free(out); return ready;
 }
+int kms_permissions_ready(void) {
+    if (!installed_permissions_ready()) return 0;
+    gchar *argv[]={(gchar *)KMS_HELPER_PATH,"--version",NULL};
+    gchar *out=NULL; gint status=0;
+    gboolean ok=g_spawn_sync(NULL,argv,NULL,0,NULL,NULL,&out,NULL,&status,NULL);
+    int ready=ok && g_spawn_check_wait_status(status,NULL) && out &&
+        !strcmp(g_strstrip(out),KMS_HELPER_VERSION);
+    g_free(out); return ready;
+}
 static void notice(GtkWindow *parent,const wup_i18n_t *tr,const char *message,const char *detail) {
     GtkWidget *d=gtk_message_dialog_new(parent,GTK_DIALOG_MODAL,GTK_MESSAGE_ERROR,GTK_BUTTONS_CLOSE,"%s",t(tr,message));
     if(detail && *detail) gtk_message_dialog_format_secondary_text(GTK_MESSAGE_DIALOG(d),"%s",detail);
     gtk_dialog_run(GTK_DIALOG(d)); gtk_widget_destroy(d);
 }
-int kms_permissions_ensure(GtkWindow *parent,const wup_i18n_t *tr) {
-    if(kms_permissions_ready()) return 1;
+static int install_helper(GtkWindow *parent,const wup_i18n_t *tr,int force) {
+    if(!force && kms_permissions_ready()) return 1;
     gchar *exe=g_file_read_link("/proc/self/exe",NULL);
     gchar *dir=exe?g_path_get_dirname(exe):NULL;
     gchar *source=dir?g_build_filename(dir,"wup-kms-helper",NULL):NULL;
@@ -41,7 +50,7 @@ int kms_permissions_ensure(GtkWindow *parent,const wup_i18n_t *tr) {
         notice(parent,tr,"KMS installation unavailable","Missing bundled helper or /usr/bin/pkexec.");
         g_free(source); return 0;
     }
-    GtkWidget *d=gtk_message_dialog_new(parent,GTK_DIALOG_MODAL,GTK_MESSAGE_QUESTION,GTK_BUTTONS_NONE,"%s",t(tr,"Enable DRM/KMS capture"));
+    GtkWidget *d=gtk_message_dialog_new(parent,GTK_DIALOG_MODAL,GTK_MESSAGE_QUESTION,GTK_BUTTONS_NONE,"%s",t(tr,installed_permissions_ready()?"Update KMS helper":"Enable DRM/KMS capture"));
     gtk_message_dialog_format_secondary_text(GTK_MESSAGE_DIALOG(d),"%s",t(tr,"Install a privileged screen capture helper from this application? Only continue if you trust this build. Administrator authentication is required once. XCB does not require it."));
     gtk_dialog_add_buttons(GTK_DIALOG(d),t(tr,"Cancel"),GTK_RESPONSE_CANCEL,t(tr,"Install KMS helper"),GTK_RESPONSE_ACCEPT,NULL);
     gtk_dialog_set_default_response(GTK_DIALOG(d),GTK_RESPONSE_CANCEL);
@@ -76,4 +85,29 @@ int kms_permissions_ensure(GtkWindow *parent,const wup_i18n_t *tr) {
     int ready=ok && g_spawn_check_wait_status(status,NULL) && kms_permissions_ready();
     if(!ready) notice(parent,tr,"KMS installation failed",error?error->message:err);
     g_clear_error(&error);g_free(err);g_free(digest);g_free(source);return ready;
+}
+int kms_permissions_ensure(GtkWindow *parent,const wup_i18n_t *tr) {
+    return install_helper(parent,tr,0);
+}
+void kms_permissions_manage(GtkWindow *parent,const wup_i18n_t *tr) {
+    int present=g_file_test(KMS_HELPER_PATH,G_FILE_TEST_EXISTS);
+    GtkWidget *d=gtk_message_dialog_new(parent,GTK_DIALOG_MODAL,GTK_MESSAGE_QUESTION,GTK_BUTTONS_NONE,"%s",t(tr,"KMS helper maintenance"));
+    gtk_message_dialog_format_secondary_text(GTK_MESSAGE_DIALOG(d),"%s",t(tr,"Install or update the privileged helper, or remove it. Stop all KMS streams before maintenance. Removal prevents new helper launches; existing processes must be stopped separately."));
+    gtk_dialog_add_buttons(GTK_DIALOG(d),t(tr,"Cancel"),GTK_RESPONSE_CANCEL,t(tr,"Install or update"),GTK_RESPONSE_ACCEPT,NULL);
+    if(present) gtk_dialog_add_button(GTK_DIALOG(d),t(tr,"Remove KMS helper"),GTK_RESPONSE_REJECT);
+    gtk_dialog_set_default_response(GTK_DIALOG(d),GTK_RESPONSE_CANCEL);
+    int answer=gtk_dialog_run(GTK_DIALOG(d)); gtk_widget_destroy(d);
+    if(answer==GTK_RESPONSE_ACCEPT) { install_helper(parent,tr,1); return; }
+    if(answer!=GTK_RESPONSE_REJECT) return;
+    static const char script[]=
+        "set -eu; for p in /usr/local /usr/local/libexec /usr/local/libexec/wupstreamd; do "
+        "[ -d \"$p\" ] && [ ! -L \"$p\" ] && [ \"$(/usr/bin/stat -c %u \"$p\")\" = 0 ]; "
+        "m=$(/usr/bin/stat -c %a \"$p\"); [ $((0$m & 022)) -eq 0 ]; done; "
+        "/usr/bin/rm -f -- /usr/local/libexec/wupstreamd/wup-kms-helper";
+    gchar *argv[]={"/usr/bin/pkexec","/bin/sh","-c",(gchar *)script,NULL};
+    gint status=0; gchar *err=NULL; GError *error=NULL;
+    gboolean ok=g_spawn_sync(NULL,argv,NULL,0,NULL,NULL,NULL,&err,&status,&error);
+    if(!ok || !g_spawn_check_wait_status(status,NULL) || g_file_test(KMS_HELPER_PATH,G_FILE_TEST_EXISTS))
+        notice(parent,tr,"KMS removal failed",error?error->message:err);
+    g_clear_error(&error);g_free(err);
 }
