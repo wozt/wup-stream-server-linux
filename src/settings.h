@@ -62,7 +62,8 @@ typedef struct {
     quality_preset_t presets[8];
     int npresets;
     input_cfg_t input;
-    int pad_brightness; /* -1: leave client setting alone; 1..6: requested level */
+    int pad_brightness; /* -1: leave client setting alone; 1..6: last selected level */
+    unsigned long pad_brightness_revision; /* runtime only: explicit GTK commands */
     int audio_pc_to_pad;
     int audio_pad_to_pc;
     int pad_volume_controls_pc; /* WUP_V96_PAD_VOLUME */

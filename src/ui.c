@@ -34,6 +34,8 @@ struct ui_t {
     GtkWidget *src_frame, *qual_frame;
     /* input */
     GtkWidget *mode_combo, *dz_spin, *sens_spin, *invert_chk;
+    GtkWidget *brightness_scale;
+    gint64 brightness_feedback_after;
     GtkWidget *gyro_combo, *gyro_sens_spin, *touch_chk, *rstick_chk;
     GtkWidget *key_entries[18];
     GtkWidget *cmd_combo;
@@ -1126,6 +1128,8 @@ static void on_input_toggled(GtkToggleButton *tb, ui_t *u) {
 
 static void on_pad_brightness_changed(GtkRange *range, ui_t *u) {
     u->s->pad_brightness = (int)gtk_range_get_value(range);
+    ++u->s->pad_brightness_revision;
+    u->brightness_feedback_after = g_get_monotonic_time() + G_USEC_PER_SEC;
     commit_live(u);
 }
 
@@ -1532,6 +1536,7 @@ static GtkWidget *build_input_section(ui_t *u) {
     gtk_box_pack_start(GTK_BOX(left), mrow, TRUE, TRUE, 0);
     gtk_box_pack_start(GTK_BOX(right), mk_label("Brightness:"), FALSE, FALSE, 0);
     GtkWidget *brightness = gtk_scale_new_with_range(GTK_ORIENTATION_HORIZONTAL, 1, 6, 1);
+    u->brightness_scale = brightness;
     gtk_style_context_add_class(gtk_widget_get_style_context(brightness), "wup-brightness");
     gtk_scale_set_digits(GTK_SCALE(brightness), 0);
     gtk_scale_set_value_pos(GTK_SCALE(brightness), GTK_POS_RIGHT);
@@ -2228,10 +2233,22 @@ static gboolean status_tick(gpointer p) {
 
 static gboolean viz_tick(gpointer p) {
     ui_t *u = p;
-    if (u->viz_area) {
-        wupstream_input_t in;
-        pad_viz_feed(u->viz_area,
-                     server_input_snapshot(u->srv, &in) ? &in : NULL);
+    wupstream_input_t in;
+    int have = server_input_snapshot(u->srv, &in);
+    if (u->viz_area) pad_viz_feed(u->viz_area, have ? &in : NULL);
+    if (have && u->brightness_scale && in.backlight >= 1 && in.backlight <= 6) {
+        int shown = (int)gtk_range_get_value(GTK_RANGE(u->brightness_scale));
+        if (in.backlight == shown && u->s->pad_brightness == shown)
+            u->brightness_feedback_after = 0;
+        if (g_get_monotonic_time() >= u->brightness_feedback_after &&
+            (in.backlight != shown || u->s->pad_brightness != in.backlight)) {
+            g_signal_handlers_block_by_func(u->brightness_scale, G_CALLBACK(on_pad_brightness_changed), u);
+            gtk_range_set_value(GTK_RANGE(u->brightness_scale), in.backlight);
+            g_signal_handlers_unblock_by_func(u->brightness_scale, G_CALLBACK(on_pad_brightness_changed), u);
+            /* Publish preference, but do not increment the command revision. */
+            u->s->pad_brightness = in.backlight;
+            commit_live(u);
+        }
     }
     return G_SOURCE_CONTINUE;
 }

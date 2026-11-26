@@ -88,6 +88,17 @@ int wupstream_frame_i420(wupstream *w, const uint8_t *pixels) {
             path.write_text(text.replace(anchor, addition + anchor, 1))
 
 
+def extend_brightness_commands(source):
+    code = source / "host/wupstream.c"
+    old = "w->light = level < 1 ? 0x40 : level | (keep ? 0x80 : 0);"
+    new = "w->light = (level < 1 ? 0x40 : level | (keep ? 0x80 : 0)) | ((w->light ^ 0x20) & 0x20);"
+    text = code.read_text()
+    if new not in text:
+        if text.count(old) != 1:
+            raise RuntimeError(f"Unexpected pinned backlight implementation: {code}")
+        code.write_text(text.replace(old, new, 1))
+
+
 def copy_atomic(src, target):
     tmp = target.with_name(target.name + ".tmp")
     shutil.copyfile(src, tmp)
@@ -103,6 +114,7 @@ def main(argv):
     source = out_lib.parent / "_wupstream_source"
     prepare_source(source)
     extend_i420(source)
+    extend_brightness_commands(source)
     # The upstream build script already pins x264 and applies the DRH patch.
     run(["sh", "host/build.sh"], cwd=source)
     archive = source / "build" / "host" / "libwupstream.a"

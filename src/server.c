@@ -209,10 +209,13 @@ static void *server_thread(void *arg) {
             usleep(2000000);
             continue;
         }
-        int brightness_sent = -1;
+        unsigned long brightness_revision = s->pad_brightness_revision;
+        int brightness_pending = 0;
+        double brightness_deadline = 0;
         if (s->pad_brightness >= 1 && s->pad_brightness <= 6) {
             wupstream_backlight(pad, s->pad_brightness, 0);
-            brightness_sent = s->pad_brightness;
+            brightness_pending = s->pad_brightness;
+            brightness_deadline = v98_clock() + 1.0;
         }
         set_status(srv, "GamePad connected, starting capture...");
 
@@ -288,10 +291,13 @@ static void *server_thread(void *arg) {
             }
             pthread_mutex_unlock(&srv->mtx);
             if (rc) break;
-            if (s->pad_brightness >= 1 && s->pad_brightness <= 6 &&
-                s->pad_brightness != brightness_sent) {
-                wupstream_backlight(pad, s->pad_brightness, 0);
-                brightness_sent = s->pad_brightness;
+            if (s->pad_brightness_revision != brightness_revision) {
+                brightness_revision = s->pad_brightness_revision;
+                if (s->pad_brightness >= 1 && s->pad_brightness <= 6) {
+                    wupstream_backlight(pad, s->pad_brightness, 0);
+                    brightness_pending = s->pad_brightness;
+                    brightness_deadline = v98_clock() + 1.0;
+                }
             }
             if (rst) {
                 cap_fails = 0;
@@ -419,6 +425,13 @@ static void *server_thread(void *arg) {
             if (wupstream_input(pad, &in) != 0) { lost = 1; break; }
             pthread_mutex_lock(&srv->mtx);
             srv->last_in = in; srv->has_in = 1;
+            /* Don't publish stale brightness while a new command is in flight. */
+            if (brightness_pending) {
+                if (in.backlight == brightness_pending || v98_clock() >= brightness_deadline)
+                    brightness_pending = 0;
+                else
+                    srv->last_in.backlight = -1;
+            }
             pthread_mutex_unlock(&srv->mtx);
             /* TV button: cycle monitors when streaming a full screen */
             if (((in.buttons ^ prev_btns) & WUPSTREAM_TV) &&
