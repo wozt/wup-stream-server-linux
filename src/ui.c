@@ -972,7 +972,7 @@ static void on_quality_spin(GtkSpinButton *sp, ui_t *u) {
 
 static void on_capture_backend_changed(GtkComboBox *cb, ui_t *u) {
     int mode = gtk_combo_box_get_active(cb);
-    if (mode < 0 || mode > 1 || mode == u->s->capture_backend) return;
+    if (mode < 0 || mode > 3 || mode == u->s->capture_backend) return;
     u->s->capture_backend = mode;
     commit_capture(u);
 }
@@ -1023,6 +1023,8 @@ static GtkWidget *build_quality_section(ui_t *u) {
     GtkWidget *backend = gtk_combo_box_text_new();
     gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(backend), "XCB MIT-SHM");
     gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(backend), "XCB GetImage");
+    gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(backend), "DRM/KMS CPU");
+    gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(backend), "DRM/KMS EGL");
     gtk_combo_box_set_active(GTK_COMBO_BOX(backend), u->s->capture_backend);
     gtk_widget_set_tooltip_text(backend, "Select the X11 capture backend; GetImage avoids MIT-SHM.");
     g_signal_connect(backend, "changed", G_CALLBACK(on_capture_backend_changed), u);

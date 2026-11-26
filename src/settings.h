@@ -56,7 +56,7 @@ typedef struct {
     int aspect;            /* ASPECT_* */
     char preset_name[64];
     int crf, kbps, gop;    /* resolved quality (preset or custom) */
-    int capture_backend; /* 0 = MIT-SHM, 1 = XCB GetImage */
+    int capture_backend; /* 0 = MIT-SHM, 1 = XCB GetImage, 2 = KMS CPU, 3 = KMS EGL */
     int custom_quality;    /* 1 = don't follow preset_name */
     int low_latency;       /* x264 zerolatency: no lookahead, no B-frames */
     quality_preset_t presets[8];

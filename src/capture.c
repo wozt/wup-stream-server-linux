@@ -171,6 +171,29 @@ int capture_start(capture_t *c, const settings_t *s) {
         c->last_w = w; c->last_h = h; c->last_x = x; c->last_y = y;
     }
 
+    if (c->capture_backend >= 2) {
+        if (c->is_window) {
+            fprintf(stderr, "[capture] KMS requires a screen or visible region (no fallback)\n");
+            goto fail;
+        }
+        screen_t screens[32];
+        int n = list_screens(screens, 32), found = -1;
+        for (int i = 0; i < n && i < 32; i++) {
+            if (c->cap_x >= screens[i].x && c->cap_y >= screens[i].y &&
+                (long)c->cap_x + c->src_w <= (long)screens[i].x + screens[i].w &&
+                (long)c->cap_y + c->src_h <= (long)screens[i].y + screens[i].h) {
+                if (s->source_type == SRC_SCREEN && strcmp(screens[i].name, s->source.output) && s->source.output[0]) continue;
+                found = i; break;
+            }
+        }
+        if (found < 0) goto fail;
+        screen_t *sc = &screens[found];
+        c->kms = wup_kms_open(sc->name, sc->w, sc->h,
+                             c->cap_x-sc->x, c->cap_y-sc->y,
+                             c->src_w, c->src_h, c->capture_backend == 3);
+        if (!c->kms || (c->capture_backend == 2 && setup_scaler(c) != 0)) goto fail;
+        return 0;
+    }
     if (setup_image(c) != 0 || setup_scaler(c) != 0) goto fail;
     return 0;
 
@@ -185,7 +208,17 @@ int capture_grab(capture_t *c, unsigned char *out) {
     xcb_get_image_reply_t *xcb_img = NULL;
     double x11_beg = capture_seconds();
 
-    if (c->capture_backend == 0) {
+    if (c->capture_backend == 3) {
+        int tw, th, ox, oy;
+        aspect_geom(c->src_w, c->src_h, c->aspect, &tw, &th, &ox, &oy);
+        if (c->aspect == ASPECT_CROP) { ox = -(tw-FW)/2; oy = -(th-FH)/2; }
+        int ret = wup_kms_egl(c->kms, out, ox, oy, tw, th);
+        c->last_x11_ms = (capture_seconds()-x11_beg)*1000.0;
+        c->last_scale_ms = 0;
+        return ret;
+    } else if (c->capture_backend == 2) {
+        if (wup_kms_cpu(c->kms, &src_data, &src_stride) != 0) return -1;
+    } else if (c->capture_backend == 0) {
         if (!c->use_shm) return -1;
         /* XCB MIT-SHM get_image: pixels land directly in our shm segment */
         xcb_shm_get_image_cookie_t ck = xcb_shm_get_image(
@@ -258,6 +291,7 @@ int capture_grab(capture_t *c, unsigned char *out) {
     int scaled = sws_scale(c->sws, (const uint8_t *const *)src_planes, src_strides,
                            0, c->src_h, dst_planes, dst_strides);
     free(xcb_img);
+    if (c->capture_backend == 2) wup_kms_release(c->kms);
     if (scaled != c->tmp_h) return -1;
     if (c->aspect == ASPECT_CROP) {
         int sx = (c->tmp_w - FW) / 2, sy = (c->tmp_h - FH) / 2;
@@ -287,6 +321,7 @@ int capture_follow(capture_t *c, const settings_t *s) {
 }
 
 void capture_stop(capture_t *c) {
+    wup_kms_close(c->kms); c->kms = NULL;
     if (c->sws) { sws_freeContext(c->sws); c->sws = NULL; }
     free(c->tmp); c->tmp = NULL;
     if (c->dpy) {

@@ -1,5 +1,6 @@
 #pragma once
 #include "settings.h"
+#include "capture_kms.h"
 #include <X11/Xlib.h>
 #include <xcb/xcb.h>
 #include <xcb/shm.h>
@@ -22,6 +23,7 @@ typedef struct {
     size_t shm_size;
     int use_shm;
     int capture_backend;
+    wup_kms_t *kms;
     /* scaler */
     struct SwsContext *sws;
     unsigned char *tmp;         /* intermediate sws output */

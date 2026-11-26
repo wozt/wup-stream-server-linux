@@ -109,7 +109,8 @@ settings_t *settings_load(void) {
     json_str(root, "preset_name", s->preset_name, sizeof s->preset_name);
     s->custom_quality = json_int(root, "custom_quality", 0);
     s->low_latency = json_int(root, "low_latency", 1);
-    s->capture_backend = json_int(root, "capture_backend", 0) == 1;
+    s->capture_backend = json_int(root, "capture_backend", 0);
+    if (s->capture_backend < 0 || s->capture_backend > 3) s->capture_backend = 0;
     s->crf = json_int(root, "crf", s->crf);
     s->kbps = json_int(root, "kbps", s->kbps);
     s->gop = 0; /* Ignore old saved values. */
