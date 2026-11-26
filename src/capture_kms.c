@@ -71,7 +71,7 @@ static drmModeFB2 *framebuffer(wup_kms_t *k) {
         fail("GetFB2 returned no GEM handle: DRM master or CAP_SYS_ADMIN required");
         drmModeFreeFB2(fb); return NULL;
     }
-    if((fb->pixel_format!=DRM_FORMAT_XRGB8888 && fb->pixel_format!=DRM_FORMAT_ARGB8888) || fb->handles[1] ||
+    if((fb->pixel_format!=DRM_FORMAT_XRGB8888 && fb->pixel_format!=DRM_FORMAT_ARGB8888) ||
        (uint64_t)fx+k->x+k->w>fb->width || (uint64_t)fy+k->y+k->h>fb->height) {
         fprintf(stderr,"[capture] KMS unsupported FB %u: %ux%u format=%08x modifier=%llx offset=%u,%u extra_handle=%u\n",id,fb->width,fb->height,fb->pixel_format,(unsigned long long)fb->modifier,fx,fy,fb->handles[1]);
         close_handles(k->fd,fb); drmModeFreeFB2(fb); return NULL;
@@ -79,12 +79,31 @@ static drmModeFB2 *framebuffer(wup_kms_t *k) {
     k->fb_x=(int)fx+k->x; k->fb_y=(int)fy+k->y;
     return fb;
 }
-static int export_frame(wup_kms_t *k,drmModeFB2 **fb,int *prime) {
-    *fb=framebuffer(k); *prime=-1;
-    if(!*fb) return fail("cannot access primary framebuffer; check permissions, format and geometry");
-    int ret=drmPrimeHandleToFD(k->fd,(*fb)->handles[0],DRM_CLOEXEC|DRM_RDWR,prime);
+/* WUP_KMS_MULTIPLANE_DCC: auxiliary modifier planes are not color channels.
+ * Export every GEM handle before closing any; repeated handles are legal. */
+static void close_primes(int prime[4]) {
+    for (int i=0; i<4; i++) if (prime[i]>=0) { close(prime[i]); prime[i]=-1; }
+}
+static int export_frame(wup_kms_t *k, drmModeFB2 **fb, int prime[4], int *planes) {
+    *planes=0;
+    for (int i=0; i<4; i++) prime[i]=-1;
+    *fb=framebuffer(k);
+    if (!*fb) return fail("cannot access primary framebuffer; check permissions, format and geometry");
+    int ret=0;
+    for (int i=0; i<4; i++) {
+        if (!(*fb)->handles[i]) continue;
+        if (i!=*planes || !(*fb)->pitches[i]) { ret=-1; break; }
+        if (drmPrimeHandleToFD(k->fd,(*fb)->handles[i],DRM_CLOEXEC|DRM_RDWR,&prime[i])) {
+            fprintf(stderr,"[capture] KMS PRIME plane %d: %s\n",i,strerror(errno));
+            ret=-1; break;
+        }
+        ++*planes;
+    }
     close_handles(k->fd,*fb);
-    if(ret) { drmModeFreeFB2(*fb); *fb=NULL; return fail("DMA-BUF export failed"); }
+    if (ret || !*planes || (*planes>1 && !((*fb)->flags & DRM_MODE_FB_MODIFIERS))) {
+        close_primes(prime); drmModeFreeFB2(*fb); *fb=NULL;
+        return fail("DMA-BUF plane export failed or missing explicit modifier");
+    }
     return 0;
 }
 static GLuint shader(GLenum kind,const char *source) {
@@ -162,10 +181,13 @@ wup_kms_t *wup_kms_open(const char *output,int sw,int sh,int sx,int sy,int x,int
     globfree(&paths);
     if(k->fd<0) goto bad;
     k->gbm=gbm_create_device(k->fd); if(!k->gbm) goto bad;
-    drmModeFB2 *fb=NULL; int prime;
-    if(export_frame(k,&fb,&prime)) goto bad;
+    drmModeFB2 *fb=NULL; int prime[4], planes;
+    if(export_frame(k,&fb,prime,&planes)) goto bad;
     fprintf(stderr,"[capture] KMS framebuffer %u: %ux%u crop=%d,%d %dx%d modifier=%llx\n",fb->fb_id,fb->width,fb->height,k->fb_x,k->fb_y,k->w,k->h,(unsigned long long)fb->modifier);
-    close(prime); drmModeFreeFB2(fb);
+    fprintf(stderr,"[capture] KMS exported %d DMA-BUF plane(s)\n",planes);
+    for (int i=0; i<planes; i++)
+        fprintf(stderr,"[capture] KMS plane %d pitch=%u offset=%u\n",i,fb->pitches[i],fb->offsets[i]);
+    close_primes(prime); drmModeFreeFB2(fb);
     if(gpu&&egl_setup(k)) { fail("EGL initialization failed"); goto bad; }
     fprintf(stderr,"[capture] DRM/KMS %s selected (no fallback)\n",gpu?"EGL":"CPU");
     return k;
@@ -180,17 +202,23 @@ void wup_kms_release(wup_kms_t *k) {
 int wup_kms_cpu(wup_kms_t *k,const uint8_t **pixels,int *stride) {
     if(!k||k->gpu) return -1;
     wup_kms_release(k);
-    drmModeFB2 *fb=NULL;int prime;
-    if(export_frame(k,&fb,&prime)) return -1;
+    drmModeFB2 *fb=NULL;int prime[4], planes;
+    if(export_frame(k,&fb,prime,&planes)) return -1;
     if(fb->flags & DRM_MODE_FB_MODIFIERS) {
-        struct gbm_import_fd_modifier_data d={0};d.width=fb->width;d.height=fb->height;d.format=fb->pixel_format;d.num_fds=1;d.fds[0]=prime;d.strides[0]=fb->pitches[0];d.offsets[0]=fb->offsets[0];d.modifier=fb->modifier;
+        struct gbm_import_fd_modifier_data d={0};d.width=fb->width;d.height=fb->height;d.format=fb->pixel_format;d.num_fds=(uint32_t)planes;d.modifier=fb->modifier;
+        for (int i=0; i<planes; i++) {
+            d.fds[i]=prime[i]; d.strides[i]=fb->pitches[i]; d.offsets[i]=fb->offsets[i];
+        }
         k->bo=gbm_bo_import(k->gbm,GBM_BO_IMPORT_FD_MODIFIER,&d,0);
-    } else if(!fb->offsets[0]) {
-        struct gbm_import_fd_data d={0};d.fd=prime;d.width=fb->width;d.height=fb->height;d.stride=fb->pitches[0];d.format=fb->pixel_format;
+    } else if(planes==1 && !fb->offsets[0]) {
+        struct gbm_import_fd_data d={0};d.fd=prime[0];d.width=fb->width;d.height=fb->height;d.stride=fb->pitches[0];d.format=fb->pixel_format;
         k->bo=gbm_bo_import(k->gbm,GBM_BO_IMPORT_FD,&d,0);
     }
-    close(prime);drmModeFreeFB2(fb);
-    if(!k->bo) return fail("GBM import failed");
+    close_primes(prime);drmModeFreeFB2(fb);
+    if(!k->bo) {
+        fprintf(stderr,"[capture] KMS GBM import (%d planes): %s\n",planes,strerror(errno));
+        return fail("GBM import failed");
+    }
     uint32_t pitch=0;
     void *ptr=gbm_bo_map(k->bo,k->fb_x,k->fb_y,k->w,k->h,GBM_BO_TRANSFER_READ,&pitch,&k->map);
     if(!ptr||pitch<(uint32_t)k->w*4||pitch>INT_MAX) {wup_kms_release(k);return fail("GBM CPU mapping failed");}
@@ -198,20 +226,38 @@ int wup_kms_cpu(wup_kms_t *k,const uint8_t **pixels,int *stride) {
 }
 int wup_kms_egl(wup_kms_t *k,unsigned char *out,int x,int y,int w,int h) {
     if(!k||!k->gpu) return -1;
-    drmModeFB2 *fb=NULL;int prime;
-    if(export_frame(k,&fb,&prime)) return -1;
-    if(!eglMakeCurrent(k->display,k->surface,k->surface,k->context)) {close(prime);drmModeFreeFB2(fb);return fail("EGL make current failed");}
-    EGLint attrs[32]={EGL_WIDTH,(EGLint)fb->width,EGL_HEIGHT,(EGLint)fb->height,EGL_LINUX_DRM_FOURCC_EXT,(EGLint)fb->pixel_format,EGL_DMA_BUF_PLANE0_FD_EXT,prime,EGL_DMA_BUF_PLANE0_OFFSET_EXT,(EGLint)fb->offsets[0],EGL_DMA_BUF_PLANE0_PITCH_EXT,(EGLint)fb->pitches[0]};
-    int n=12, ret=-1;
-    if(fb->flags&DRM_MODE_FB_MODIFIERS) {
+    drmModeFB2 *fb=NULL;int prime[4], planes;
+    if(export_frame(k,&fb,prime,&planes)) return -1;
+    if(!eglMakeCurrent(k->display,k->surface,k->surface,k->context)) {close_primes(prime);drmModeFreeFB2(fb);return fail("EGL make current failed");}
+    EGLint attrs[48]={EGL_WIDTH,(EGLint)fb->width,EGL_HEIGHT,(EGLint)fb->height,
+        EGL_LINUX_DRM_FOURCC_EXT,(EGLint)fb->pixel_format};
+    int n=6, ret=-1;
+    static const EGLint fd_key[4]={EGL_DMA_BUF_PLANE0_FD_EXT,EGL_DMA_BUF_PLANE1_FD_EXT,EGL_DMA_BUF_PLANE2_FD_EXT,EGL_DMA_BUF_PLANE3_FD_EXT};
+    static const EGLint offset_key[4]={EGL_DMA_BUF_PLANE0_OFFSET_EXT,EGL_DMA_BUF_PLANE1_OFFSET_EXT,EGL_DMA_BUF_PLANE2_OFFSET_EXT,EGL_DMA_BUF_PLANE3_OFFSET_EXT};
+    static const EGLint pitch_key[4]={EGL_DMA_BUF_PLANE0_PITCH_EXT,EGL_DMA_BUF_PLANE1_PITCH_EXT,EGL_DMA_BUF_PLANE2_PITCH_EXT,EGL_DMA_BUF_PLANE3_PITCH_EXT};
+    static const EGLint lo_key[4]={EGL_DMA_BUF_PLANE0_MODIFIER_LO_EXT,EGL_DMA_BUF_PLANE1_MODIFIER_LO_EXT,EGL_DMA_BUF_PLANE2_MODIFIER_LO_EXT,EGL_DMA_BUF_PLANE3_MODIFIER_LO_EXT};
+    static const EGLint hi_key[4]={EGL_DMA_BUF_PLANE0_MODIFIER_HI_EXT,EGL_DMA_BUF_PLANE1_MODIFIER_HI_EXT,EGL_DMA_BUF_PLANE2_MODIFIER_HI_EXT,EGL_DMA_BUF_PLANE3_MODIFIER_HI_EXT};
+    int modified=(fb->flags & DRM_MODE_FB_MODIFIERS)!=0;
+    if (modified) {
         const char *ext=eglQueryString(k->display,EGL_EXTENSIONS);
-        if(!ext||!strstr(ext,"EGL_EXT_image_dma_buf_import_modifiers")) goto done;
-        attrs[n++]=EGL_DMA_BUF_PLANE0_MODIFIER_LO_EXT;attrs[n++]=(EGLint)(uint32_t)fb->modifier;
-        attrs[n++]=EGL_DMA_BUF_PLANE0_MODIFIER_HI_EXT;attrs[n++]=(EGLint)(uint32_t)(fb->modifier>>32);
+        if (!ext || !strstr(ext,"EGL_EXT_image_dma_buf_import_modifiers")) goto done;
+    }
+    for (int i=0; i<planes; i++) {
+        if (fb->offsets[i]>INT_MAX || fb->pitches[i]>INT_MAX) goto done;
+        attrs[n++]=fd_key[i]; attrs[n++]=prime[i];
+        attrs[n++]=offset_key[i]; attrs[n++]=(EGLint)fb->offsets[i];
+        attrs[n++]=pitch_key[i]; attrs[n++]=(EGLint)fb->pitches[i];
+        if (modified) {
+            attrs[n++]=lo_key[i]; attrs[n++]=(EGLint)(uint32_t)fb->modifier;
+            attrs[n++]=hi_key[i]; attrs[n++]=(EGLint)(uint32_t)(fb->modifier>>32);
+        }
     }
     attrs[n]=EGL_NONE;
     EGLImageKHR image=k->create_image(k->display,EGL_NO_CONTEXT,EGL_LINUX_DMA_BUF_EXT,NULL,attrs);
-    if(image==EGL_NO_IMAGE_KHR) goto done;
+    if(image==EGL_NO_IMAGE_KHR) {
+        fprintf(stderr,"[capture] KMS EGL import error 0x%x (planes=%d)\n",(unsigned)eglGetError(),planes);
+        goto done;
+    }
     glBindTexture(GL_TEXTURE_2D,k->texture);k->bind_image(GL_TEXTURE_2D,(GLeglImageOES)image);
     glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,GL_LINEAR);glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER,GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_WRAP_S,GL_CLAMP_TO_EDGE);glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_WRAP_T,GL_CLAMP_TO_EDGE);
@@ -227,7 +273,7 @@ int wup_kms_egl(wup_kms_t *k,unsigned char *out,int x,int y,int w,int h) {
     glDeleteTextures(1,&k->texture);glGenTextures(1,&k->texture);
     k->destroy_image(k->display,image);
 done:
-    close(prime);drmModeFreeFB2(fb);
+    close_primes(prime);drmModeFreeFB2(fb);
     eglMakeCurrent(k->display,EGL_NO_SURFACE,EGL_NO_SURFACE,EGL_NO_CONTEXT);
     return ret?fail("EGL import/draw/readback failed"):0;
 }
