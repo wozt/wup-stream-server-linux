@@ -209,6 +209,11 @@ static void *server_thread(void *arg) {
             usleep(2000000);
             continue;
         }
+        int brightness_sent = -1;
+        if (s->pad_brightness >= 1 && s->pad_brightness <= 6) {
+            wupstream_backlight(pad, s->pad_brightness, 0);
+            brightness_sent = s->pad_brightness;
+        }
         set_status(srv, "GamePad connected, starting capture...");
 
         capture_t cap = {0};
@@ -283,6 +288,11 @@ static void *server_thread(void *arg) {
             }
             pthread_mutex_unlock(&srv->mtx);
             if (rc) break;
+            if (s->pad_brightness >= 1 && s->pad_brightness <= 6 &&
+                s->pad_brightness != brightness_sent) {
+                wupstream_backlight(pad, s->pad_brightness, 0);
+                brightness_sent = s->pad_brightness;
+            }
             if (rst) {
                 cap_fails = 0;
                 if (cap_async) { capture_async_free(cap_async); cap_async = NULL; }

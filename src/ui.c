@@ -1116,6 +1116,11 @@ static void on_input_toggled(GtkToggleButton *tb, ui_t *u) {
     commit_live(u);
 }
 
+static void on_pad_brightness_changed(GtkRange *range, ui_t *u) {
+    u->s->pad_brightness = (int)gtk_range_get_value(range);
+    commit_live(u);
+}
+
 static void on_mode_changed(GtkComboBox *cb, ui_t *u) {
     u->s->input.mode = gtk_combo_box_get_active(cb);
     gtk_widget_set_sensitive(u->rstick_chk, u->s->input.mode == INMODE_KBMOUSE);
@@ -1511,7 +1516,24 @@ static GtkWidget *build_input_section(ui_t *u) {
     gtk_combo_box_set_active(GTK_COMBO_BOX(u->mode_combo), u->s->input.mode);
     g_signal_connect(u->mode_combo, "changed", G_CALLBACK(on_mode_changed), u);
     gtk_box_pack_start(GTK_BOX(mrow), u->mode_combo, FALSE, FALSE, 0);
-    gtk_box_pack_start(GTK_BOX(sec), mrow, FALSE, FALSE, 0);
+    /* Compact brightness control at the start of the right half. */
+    GtkWidget *left = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
+    GtkWidget *right = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 5);
+    GtkWidget *mode_line = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 7);
+    gtk_box_set_homogeneous(GTK_BOX(mode_line), TRUE);
+    gtk_box_pack_start(GTK_BOX(left), mrow, TRUE, TRUE, 0);
+    gtk_box_pack_start(GTK_BOX(right), mk_label("Brightness:"), FALSE, FALSE, 0);
+    GtkWidget *brightness = gtk_scale_new_with_range(GTK_ORIENTATION_HORIZONTAL, 1, 6, 1);
+    gtk_scale_set_digits(GTK_SCALE(brightness), 0);
+    gtk_scale_set_value_pos(GTK_SCALE(brightness), GTK_POS_RIGHT);
+    gtk_widget_set_size_request(brightness, 115, -1);
+    gtk_range_set_value(GTK_RANGE(brightness), u->s->pad_brightness >= 1 ? u->s->pad_brightness : 3);
+    gtk_widget_set_tooltip_text(brightness, "GamePad screen brightness (1-6)");
+    g_signal_connect(brightness, "value-changed", G_CALLBACK(on_pad_brightness_changed), u);
+    gtk_box_pack_start(GTK_BOX(right), brightness, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(mode_line), left, TRUE, TRUE, 0);
+    gtk_box_pack_start(GTK_BOX(mode_line), right, TRUE, TRUE, 0);
+    gtk_box_pack_start(GTK_BOX(sec), mode_line, FALSE, FALSE, 0);
 
     /* Two columns: pad + sensors, keyboard mappings */
     GtkWidget *cols = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 7);

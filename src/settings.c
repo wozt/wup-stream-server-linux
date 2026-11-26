@@ -36,6 +36,7 @@ void settings_defaults(settings_t *s) {
     s->crf = 18;
     s->kbps = 10000;
     s->gop = 0;
+    s->pad_brightness = -1;
     s->audio_pc_to_pad = 1;
     s->audio_pad_to_pc = 0;
     s->pad_volume_controls_pc = 1; /* Preserve previous default behavior */
@@ -114,6 +115,8 @@ settings_t *settings_load(void) {
     s->crf = json_int(root, "crf", s->crf);
     s->kbps = json_int(root, "kbps", s->kbps);
     s->gop = 0; /* Ignore old saved values. */
+    s->pad_brightness = json_int(root, "pad_brightness", -1);
+    if (s->pad_brightness < 1 || s->pad_brightness > 6) s->pad_brightness = -1;
     s->audio_pc_to_pad = json_int(root, "audio_pc_to_pad", s->audio_pc_to_pad);
     s->audio_pad_to_pc = json_int(root, "audio_pad_to_pc", s->audio_pad_to_pc);
     s->pad_volume_controls_pc = json_int(root, "pad_volume_controls_pc", s->pad_volume_controls_pc);
@@ -226,6 +229,7 @@ void settings_save(settings_t *s) {
     json_object_set_int_member(root, "capture_backend", s->capture_backend);
     json_object_set_int_member(root, "crf", s->crf);
     json_object_set_int_member(root, "kbps", s->kbps);
+    json_object_set_int_member(root, "pad_brightness", s->pad_brightness);
     json_object_set_int_member(root, "audio_pc_to_pad", s->audio_pc_to_pad);
     json_object_set_int_member(root, "audio_pad_to_pc", s->audio_pad_to_pc);
     json_object_set_int_member(root, "pad_volume_controls_pc", s->pad_volume_controls_pc);
