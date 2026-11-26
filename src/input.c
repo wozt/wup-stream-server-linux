@@ -47,7 +47,9 @@ struct input_ctx {
     int prev_lx, prev_ly, prev_rx, prev_ry;
     int prev_touched, prev_tx, prev_ty;
     unsigned prev_stick_dirs;
-    int pad_volume;              /* last volume sent to PC */
+    int pad_volume;              /* accepted physical position (0..255) */
+    int vol_candidate;           /* anchor of the current stable window */
+    double vol_candidate_since;  /* monotonic seconds */
     double vol_last;             /* last time we spawned pactl */
     /* mouse accumulators */
     double mx, my;               /* pending relative motion */
@@ -511,44 +513,49 @@ void input_dispatch(input_ctx_t *ctx, const settings_t *s, const wupstream_input
     /* keymap may have been edited in the UI: reload cheaply each call? no —
        apply_keysyms called by UI on change. cached here. */
 
-    /* WUP_V96_PAD_VOLUME: only control the OS volume while real desktop
-     * video is active. GamePad-only and cleared regions must be silent as
-     * far as OS-volume changes are concerned, even though input stays live.
-     * The hardware reports a RAW 0..255 value (wupstream_input_t.volume).
-     * Our pactl command is an absolute, strictly bounded 0..150%% value.
-     * Remember the last value only when it was actually submitted: rapid
-     * slider movements then settle to the FINAL position after 250 ms. */
+    /* WUP_PAD_VOLUME_DEBOUNCE: analog hysteresis and stable-window filtering.
+     * First valid report establishes a baseline without changing PC volume. */
     gboolean pc_volume_enabled = s->pad_volume_controls_pc &&
         !s->gamepad_only &&
         !(s->source_type == SRC_REGION &&
           (s->source.w <= 0 || s->source.h <= 0));
     if (!pc_volume_enabled) {
-        ctx->pad_volume = -1; /* resynchronize when normal video resumes */
-    } else if (in->volume >= 0 && in->volume != ctx->pad_volume) {
+        ctx->pad_volume = -1;
+        ctx->vol_candidate = -1;
+    } else if (in->volume >= 0) {
         struct timespec now;
         clock_gettime(CLOCK_MONOTONIC, &now);
         double t = now.tv_sec + now.tv_nsec / 1e9;
-        if (t - ctx->vol_last >= 0.25) {
-            int raw = in->volume;
-            if (raw > 255) raw = 255;
-            /* GamePad physical slider 0..100% maps to PC volume 0..150%.
-             * Raw report range is 0..255; +127 rounds to nearest percent. */
-            int pct = (raw * 150 + 127) / 255;
-            if (pct > 150) pct = 150;
-            char value[16];
-            snprintf(value, sizeof value, "%d%%", pct);
-            gchar *argv[] = {"pactl", "set-sink-volume", "@DEFAULT_SINK@", value, NULL};
-            GError *error = NULL;
-            if (g_spawn_async(NULL, argv, NULL,
-                    G_SPAWN_SEARCH_PATH | G_SPAWN_STDOUT_TO_DEV_NULL |
-                    G_SPAWN_STDERR_TO_DEV_NULL,
-                    NULL, NULL, NULL, &error)) {
-                ctx->pad_volume = in->volume;
-            } else {
-                g_warning("Cannot launch pactl: %s", error->message);
-                g_clear_error(&error);
+        int raw = in->volume > 255 ? 255 : in->volume;
+        if (ctx->pad_volume < 0) {
+            ctx->pad_volume = raw;
+            ctx->vol_candidate = -1;
+        } else if (abs(raw - ctx->pad_volume) < 5) {
+            ctx->vol_candidate = -1;
+        } else {
+            if (ctx->vol_candidate < 0 || abs(raw - ctx->vol_candidate) > 2) {
+                ctx->vol_candidate = raw;
+                ctx->vol_candidate_since = t;
             }
-            ctx->vol_last = t;
+            if (t - ctx->vol_candidate_since >= 0.10 &&
+                t - ctx->vol_last >= 0.25) {
+                int pct = (raw * 150 + 127) / 255;
+                char value[16];
+                snprintf(value, sizeof value, "%d%%", pct);
+                gchar *argv[] = {"pactl", "set-sink-volume", "@DEFAULT_SINK@", value, NULL};
+                GError *error = NULL;
+                if (g_spawn_async(NULL, argv, NULL,
+                        G_SPAWN_SEARCH_PATH | G_SPAWN_STDOUT_TO_DEV_NULL |
+                        G_SPAWN_STDERR_TO_DEV_NULL,
+                        NULL, NULL, NULL, &error)) {
+                    ctx->pad_volume = raw;
+                    ctx->vol_candidate = -1;
+                } else {
+                    g_warning("Cannot launch pactl: %s", error->message);
+                    g_clear_error(&error);
+                }
+                ctx->vol_last = t;
+            }
         }
     }
 
