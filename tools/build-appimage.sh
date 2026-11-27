@@ -109,6 +109,7 @@ for pattern in 'libEGL*.so*' 'libGLES*.so*' 'libGL*.so*' 'libgbm.so*' \
     'libwayland-*.so*' 'libxcb*.so*' 'libxkbcommon*.so*' \
     'libglib-2.0.so*' 'libgio-2.0.so*' 'libgobject-2.0.so*' \
     'libgmodule-2.0.so*' 'libgthread-2.0.so*' 'libffi.so*' 'libpcre2-*.so*' \
+    'libmount.so*' 'libblkid.so*' \
     'libstdc++.so*' 'libgcc_s.so*' 'libzstd.so*' 'libexpat.so*'; do
   exclude+=("--exclude-library=$pattern")
 done
@@ -120,5 +121,12 @@ done
    --desktop-file "$APPDIR/usr/share/applications/wupstreamd.desktop" \
    --icon-file "$APPDIR/usr/share/icons/hicolor/256x256/apps/wupstreamd.png" \
    --output appimage
+# WUP_APPIMAGE_HOST_MOUNT_ABI: never publish an incompatible host GIO dependency.
+for pattern in 'libmount.so*' 'libblkid.so*'; do
+  if [[ -n "$(find "$APPDIR" -name "$pattern" -print -quit)" ]]; then
+    echo "Unexpected bundled host dependency: $pattern" >&2
+    exit 1
+  fi
+done
 printf '\nCreated: %s\n' "$OUTPUT"
 
