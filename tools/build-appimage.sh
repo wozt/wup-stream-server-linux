@@ -51,6 +51,52 @@ for icon in btn_a.svg btn_tv.svg; do
 done
 printf "Bundled %d themes and %d language files into AppDir\n" "${#theme_files[@]}" "${#language_files[@]}"
 
+# WUP_APPIMAGE_PIXBUF_RUNTIME: deploy matching loaders and their dependencies.
+PIXBUF_DIR="$(pkg-config --variable=gdk_pixbuf_moduledir gdk-pixbuf-2.0)"
+PIXBUF_QUERY="$(pkg-config --variable=gdk_pixbuf_query_loaders gdk-pixbuf-2.0)"
+[[ -x "$PIXBUF_QUERY" ]] || PIXBUF_QUERY="$(dirname "$PIXBUF_DIR")/gdk-pixbuf-query-loaders"
+loaders=("$PIXBUF_DIR"/*.so)
+(( ${#loaders[@]} > 0 ))
+[[ -x "$PIXBUF_QUERY" && -r "$PIXBUF_DIR/libpixbufloader-svg.so" ]]
+loader_args=()
+for loader in "${loaders[@]}"; do loader_args+=(--library "$loader"); done
+"$PIXBUF_QUERY" "${loaders[@]}" | sed "s|$PIXBUF_DIR/|@APPDIR@/usr/lib/|g" > "$APPDIR/usr/share/wupstreamd/pixbuf-loaders.cache.in"
+grep -Fq '@APPDIR@/usr/lib/libpixbufloader-svg.so' "$APPDIR/usr/share/wupstreamd/pixbuf-loaders.cache.in"
+for theme in Adwaita hicolor; do
+  mkdir -p "$APPDIR/usr/share/icons/$theme"
+  cp -a "/usr/share/icons/$theme/." "$APPDIR/usr/share/icons/$theme/"
+done
+find "$APPDIR/usr/share/icons" -name icon-theme.cache -delete
+mkdir -p "$APPDIR/usr/share/mime"
+cp -a /usr/share/mime/. "$APPDIR/usr/share/mime/"
+# Custom AppRun: never use the host's pixbuf module cache.
+cat > "$OUT/wupstreamd-AppRun" <<'LAUNCHER'
+#!/bin/sh
+set -eu
+APPDIR="$(CDPATH= cd -- "$(dirname "$0")" && pwd)"
+export APPDIR
+export LD_LIBRARY_PATH="$APPDIR/usr/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+export XDG_DATA_DIRS="$APPDIR/usr/share:${XDG_DATA_DIRS:-/usr/local/share:/usr/share}"
+export GTK_DATA_PREFIX="$APPDIR/usr"
+export GDK_PIXBUF_MODULEDIR="$APPDIR/usr/lib"
+cache="$(mktemp "${TMPDIR:-/tmp}/wup-pixbuf.XXXXXXXX")"
+trap 'rm -f "$cache"' EXIT
+escaped="$(printf '%s' "$APPDIR" | sed 's/[\\&|]/\\&/g')"
+sed "s|@APPDIR@|$escaped|g" "$APPDIR/usr/share/wupstreamd/pixbuf-loaders.cache.in" > "$cache"
+export GDK_PIXBUF_MODULE_FILE="$cache"
+if [ "${1:-}" = --self-test-icons ]; then
+  "$APPDIR/usr/bin/check-gtk-icons"
+  exit $?
+fi
+"$APPDIR/usr/bin/wupstreamd" "$@" &
+child=$!
+trap 'kill -TERM "$child" 2>/dev/null || true' TERM
+trap 'kill -INT "$child" 2>/dev/null || true' INT
+wait "$child"
+LAUNCHER
+chmod 755 "$OUT/wupstreamd-AppRun"
+cc -O2 -Wall -Wextra tools/check-gtk-icons.c -o "$APPDIR/usr/bin/check-gtk-icons" $(pkg-config --cflags --libs gtk+-3.0)
+
 chmod -R a+rX "$APPDIR"
 
 # linuxdeploy collects non-system runtime dependencies of the binary.
@@ -68,6 +114,9 @@ for pattern in 'libEGL*.so*' 'libGLES*.so*' 'libGL*.so*' 'libgbm.so*' \
 done
 "$LD" "${exclude[@]}" --appdir "$APPDIR" \
    --executable "$APPDIR/usr/bin/wupstreamd" \
+   --executable "$APPDIR/usr/bin/check-gtk-icons" \
+   "${loader_args[@]}" \
+   --custom-apprun "$OUT/wupstreamd-AppRun" \
    --desktop-file "$APPDIR/usr/share/applications/wupstreamd.desktop" \
    --icon-file "$APPDIR/usr/share/icons/hicolor/256x256/apps/wupstreamd.png" \
    --output appimage
