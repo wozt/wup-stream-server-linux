@@ -163,7 +163,7 @@ The first build downloads its pinned upstream code/x264 and linuxdeploy.
 For local AppImages, use `bash tools/build-appimage.sh` after setting
 `LINUXDEPLOY` to the path of the official linuxdeploy AppImage.
 
-## License
+## License 
 
 Same as upstream wup-stream where applicable; button icons are CC0
 (OpenGameArt "Controller Input Icons").
