@@ -11,7 +11,7 @@ import sys
 from pathlib import Path
 
 UPSTREAM_URL = "https://github.com/wozt/wup-stream.git"
-UPSTREAM_COMMIT = "8609916410a2c7b0ef7f052e00d788538e2ca43e"
+UPSTREAM_COMMIT = "a082db95ba621ceaa5f5f436755d91df87400392"
 
 
 def run(command, *, cwd=None):
@@ -99,6 +99,35 @@ def extend_brightness_commands(source):
         code.write_text(text.replace(old, new, 1))
 
 
+def extend_camera_switch(source):
+    header = source / "host/wupstream.h"
+    code = source / "host/wupstream.c"
+    declaration = "void wupstream_camera_disable(wupstream *w);"
+    implementation = """void wupstream_camera_disable(wupstream *w) {
+    pthread_mutex_lock(&w->mu);
+    w->cam = 0; w->last_hello = 0;
+    w->cam_n = w->cam_r = w->cam_parts = w->cam_len = 0;
+    w->cam_got = 0; w->cam_cur = w->cam_run_out = -1;
+    w->cam_ok = 1; w->cam_fn = 0;
+    pthread_mutex_unlock(&w->mu);
+}
+"""
+    for path, addition in ((header, declaration + "\n"), (code, implementation)):
+        text = path.read_text()
+        if addition not in text:
+            anchor = "int wupstream_camera("
+            if text.count(anchor) != 1:
+                raise RuntimeError(f"Unexpected camera API: {path}")
+            path.write_text(text.replace(anchor, addition + anchor, 1))
+    text = code.read_text()
+    old = "if (b[0] == 'C' && n > 8"
+    new = "if (w->cam && b[0] == 'C' && n > 8"
+    if new not in text:
+        if text.count(old) != 1:
+            raise RuntimeError("Unexpected camera packet handler")
+        code.write_text(text.replace(old, new, 1))
+
+
 def copy_atomic(src, target):
     tmp = target.with_name(target.name + ".tmp")
     shutil.copyfile(src, tmp)
@@ -115,6 +144,7 @@ def main(argv):
     prepare_source(source)
     extend_i420(source)
     extend_brightness_commands(source)
+    extend_camera_switch(source)
     # The upstream build script already pins x264 and applies the DRH patch.
     run(["sh", "host/build.sh"], cwd=source)
     archive = source / "build" / "host" / "libwupstream.a"

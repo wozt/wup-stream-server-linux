@@ -27,6 +27,7 @@ void server_calib_gyro(server_t *srv);      /* calibrate gyro bias (~3 s) */
 
 int server_state(server_t *srv);             /* SRV_* */
 const char *server_status(server_t *srv);    /* human-readable status */
+int server_camera_snapshot(server_t *srv, unsigned char *bgra); /* 640x480x4 */
 int server_input_snapshot(server_t *srv, wupstream_input_t *out); /* 1 = fresh pad data */
 
 /* WUP_V98_ALL_IN_ONE */

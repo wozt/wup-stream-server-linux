@@ -17,6 +17,8 @@ typedef struct {
     wupstream_input_t in;
     gboolean has;
     gboolean themed;
+    gboolean camera_valid;
+    unsigned char camera_pixels[640 * 480 * 4];
     GdkRGBA palette[VCOLORS];
     char localized[6][128]; /* WUP_V6_JSON_LANGUAGES */
 } viz_state_t;
@@ -336,6 +338,22 @@ static void screen_frame(cairo_t *cr) {
     cairo_fill(cr);
     cairo_pattern_destroy(p);
 
+    const viz_state_t *st = cairo_get_user_data(cr, &viz_theme_key);
+    if (st && st->camera_valid) {
+        cairo_surface_t *image = cairo_image_surface_create_for_data(
+            (unsigned char *)st->camera_pixels, CAIRO_FORMAT_RGB24, 640, 480, 640 * 4);
+        cairo_save(cr);
+        round_path(cr, 106, 56, 228, 128, 3.5);
+        cairo_clip(cr);
+        cairo_translate(cr, 106, 56 + (128 - 480 * 228.0 / 640) / 2);
+        cairo_scale(cr, 228.0 / 640, 228.0 / 640);
+        cairo_set_source_surface(cr, image, 0, 0);
+        cairo_paint(cr);
+        cairo_set_source_rgba(cr, 0, 0, 0, .28);
+        cairo_paint(cr);
+        cairo_restore(cr);
+        cairo_surface_destroy(image);
+    }
     /* Very subtle LCD grid, behind gauges (never connected to controls). */
     cairo_new_path(cr);
     for (int x = 122; x <= 326; x += 17) {
@@ -365,7 +383,8 @@ static void gyro_gauge(cairo_t *cr, const char *axis,
 
     /* The full track is visible even before a stream is connected. */
     round_path(cr, x, y, width, 9, 4.0);
-    rgba(cr, .15, .24, .33, 1);
+    const viz_state_t *cam = cairo_get_user_data(cr, &viz_theme_key);
+    rgba(cr, .15, .24, .33, cam && cam->camera_valid ? .45 : 1);
     cairo_fill_preserve(cr);
     rgba(cr, .51, .70, .84, .48);
     cairo_set_line_width(cr, .8);
@@ -387,7 +406,7 @@ static void gyro_gauge(cairo_t *cr, const char *axis,
                y + 1.4, amount, 6.2, 2.0);
     if (!live) rgba(cr, .52, .62, .73, .75);
     else if (velocity < 0) rgba(cr, 1, .64, .30, 1);
-    else accent_color(cr, 1);
+    else accent_color(cr, cam && cam->camera_valid ? .65 : 1);
     cairo_fill(cr);
 
     /* Prominent zero, drawn last so that it cannot be hidden by the bar. */
@@ -474,7 +493,8 @@ static void motion_screen(cairo_t *cr, const wupstream_input_t *in,
     label(cr, pad_word(cr,2,"TOUCH"), 302, 92, 9, TRUE, .71, .81, .91, .96, TRUE);
     const double sx = 278, sy = 100, sw = 49, sh = 28;
     round_path(cr, sx, sy, sw, sh, 2.5);
-    rgba(cr, .08, .16, .24, .96);
+    const viz_state_t *cam = cairo_get_user_data(cr, &viz_theme_key);
+    rgba(cr, .08, .16, .24, cam && cam->camera_valid ? .35 : .96);
     cairo_fill_preserve(cr);
     rgba(cr, .59, .76, .92, .60);
     cairo_set_line_width(cr, .8);
@@ -569,6 +589,15 @@ GtkWidget *pad_viz_new(void) {
     g_object_set_data_full(G_OBJECT(w), "viz-state", st, g_free);
     g_signal_connect(w, "draw", G_CALLBACK(viz_draw), NULL);
     return w;
+}
+
+void pad_viz_camera(GtkWidget *w, const unsigned char *bgra) {
+    viz_state_t *st = viz_state(w);
+    if (!st) return;
+    if (!bgra && !st->camera_valid) return;
+    st->camera_valid = bgra != NULL;
+    if (bgra) memcpy(st->camera_pixels, bgra, sizeof st->camera_pixels);
+    gtk_widget_queue_draw(w);
 }
 
 void pad_viz_feed(GtkWidget *w, const wupstream_input_t *in) {

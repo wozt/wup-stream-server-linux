@@ -1,6 +1,7 @@
 #define _DEFAULT_SOURCE
 #include "server.h"
 #include "capture.h"
+#include "camera.h"
 #include "capture_async.h" /* WUP_V912_CAPTURE_OPTIMIZATION */
 #include "audio.h"
 #include "input.h"
@@ -47,6 +48,8 @@ struct server_t {
     pthread_mutex_t mtx;
     wupstream_input_t last_in;
     int has_in;
+    int camera_valid;
+    unsigned char camera_pixels[640 * 480 * 4];
 };
 
 static void set_status(server_t *srv, const char *fmt, ...) {
@@ -261,6 +264,8 @@ static void *server_thread(void *arg) {
         if (ictx && s->input.mode == INMODE_GAMEPAD && !input_gamepad_ok(ictx))
             set_status(srv, "GamePad: /dev/uinput unavailable, using kb/mouse mode");
 
+        camera_t *camera = NULL;
+        int camera_active = 0;
         srv->state = SRV_STREAMING;
         set_status(srv, "streaming");
 
@@ -450,6 +455,27 @@ static void *server_thread(void *arg) {
                 }
             }
 
+            /* Camera is opt-in; bounded reads, nonblocking webcam output. */
+            if (s->camera_announce || s->camera_preview) {
+                if (!camera_active) { camera = camera_new(); camera_active = 1; }
+                if (camera) {
+                    const unsigned char *pixels = camera_poll(camera, pad, s->camera_announce);
+                    if (pixels && s->camera_preview) {
+                        pthread_mutex_lock(&srv->mtx);
+                        memcpy(srv->camera_pixels, pixels, sizeof srv->camera_pixels);
+                        srv->camera_valid = 1;
+                        pthread_mutex_unlock(&srv->mtx);
+                    }
+                }
+            } else if (camera_active) {
+                wupstream_camera_disable(pad);
+                camera_free(camera); camera = NULL; camera_active = 0;
+            }
+            if (!s->camera_preview) {
+                pthread_mutex_lock(&srv->mtx);
+                srv->camera_valid = 0;
+                pthread_mutex_unlock(&srv->mtx);
+            }
             /* mic pad -> PC */
             if (have_ain && !s->gamepad_only) {
                 int got = wupstream_mic(pad, mic_buf, 800);
@@ -526,6 +552,7 @@ static void *server_thread(void *arg) {
 
         pthread_mutex_lock(&srv->mtx);
         memset(&srv->metrics, 0, sizeof srv->metrics);
+        srv->camera_valid = 0;
         /* WUP_FIX_DISCONNECT_RELEASES: invalidate the last input report.
          * Otherwise the GTK visualization keeps HOME/B visually pressed
          * after the GamePad leaves (also on stop/reconnect/link loss).
@@ -538,6 +565,7 @@ static void *server_thread(void *arg) {
         if (have_aout) audio_out_stop(&aout);
         if (have_ain) audio_in_stop(&ain);
         if (ictx) input_free(ictx);
+        camera_free(camera);
         wupstream_close(pad);
 
         if (lost) {
@@ -566,6 +594,14 @@ static void *server_thread(void *arg) {
     }
     srv->running = 0;
     return NULL;
+}
+
+int server_camera_snapshot(server_t *srv, unsigned char *bgra) {
+    pthread_mutex_lock(&srv->mtx);
+    int valid = srv->camera_valid;
+    if (valid) memcpy(bgra, srv->camera_pixels, sizeof srv->camera_pixels);
+    pthread_mutex_unlock(&srv->mtx);
+    return valid;
 }
 
 server_t *server_new(settings_t *s) {

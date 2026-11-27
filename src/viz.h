@@ -7,6 +7,7 @@
  * shows the idle/disconnected visual. All buttons, both sticks, touch,
  * gyroscope gauges and accelerometer readings are handled in src/viz.c. */
 GtkWidget *pad_viz_new(void);
+void pad_viz_camera(GtkWidget *w, const unsigned char *bgra);
 void pad_viz_feed(GtkWidget *w, const wupstream_input_t *in);
 
 /* WUP_V5_JSON_THEMES: update the entire GamePad preview without restarting. */

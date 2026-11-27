@@ -41,6 +41,7 @@ struct ui_t {
     GtkWidget *cmd_combo;
     GtkWidget *stick_entries[8];
     GtkWidget *viz_area, *black_chk;
+    GtkWidget *camera_announce_chk, *camera_preview_chk;
     GtkWidget *row1, *row2, *input_cols; /* adaptive layout */
     int stream_icon_mode; /* update button icon only on state changes */
     GtkCssProvider *theme_css;
@@ -1126,6 +1127,14 @@ static void on_input_toggled(GtkToggleButton *tb, ui_t *u) {
     commit_live(u);
 }
 
+static void on_camera_toggled(GtkToggleButton *tb, ui_t *u) {
+    (void)tb;
+    u->s->camera_announce = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(u->camera_announce_chk));
+    u->s->camera_preview = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(u->camera_preview_chk));
+    if (!u->s->camera_preview) pad_viz_camera(u->viz_area, NULL);
+    commit_live(u);
+}
+
 static void on_pad_brightness_changed(GtkRange *range, ui_t *u) {
     u->s->pad_brightness = (int)gtk_range_get_value(range);
     ++u->s->pad_brightness_revision;
@@ -1569,6 +1578,15 @@ static GtkWidget *build_input_section(ui_t *u) {
         gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(u->invert_chk), u->s->input.invert_y);
         g_signal_connect(u->invert_chk, "toggled", G_CALLBACK(on_input_toggled), u);
         gtk_box_pack_start(GTK_BOX(padopts), u->invert_chk, FALSE, FALSE, 0);
+        u->camera_announce_chk = wup_compact_check("Announce camera");
+        u->camera_preview_chk = wup_compact_check("Preview camera");
+        gtk_widget_set_tooltip_text(u->camera_announce_chk, "Send camera to Wii U GamePad Camera (/dev/video42; v4l2loopback required)");
+        gtk_widget_set_tooltip_text(u->camera_preview_chk, "Temporarily show GamePad camera behind live sensors");
+        gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(u->camera_announce_chk), u->s->camera_announce);
+        gtk_box_pack_start(GTK_BOX(padopts), u->camera_announce_chk, FALSE, FALSE, 0);
+        gtk_box_pack_start(GTK_BOX(padopts), u->camera_preview_chk, FALSE, FALSE, 0);
+        g_signal_connect(u->camera_announce_chk, "toggled", G_CALLBACK(on_camera_toggled), u);
+        g_signal_connect(u->camera_preview_chk, "toggled", G_CALLBACK(on_camera_toggled), u);
         u->viz_area = pad_viz_new();
         gtk_widget_set_tooltip_text(u->viz_area, "Live GamePad buttons, sticks, touch and gyro axes");
         gtk_widget_set_hexpand(u->viz_area, TRUE);
@@ -2241,6 +2259,14 @@ static gboolean status_tick(gpointer p) {
     return G_SOURCE_CONTINUE;
 }
 
+static gboolean camera_preview_tick(gpointer p) {
+    ui_t *u = p;
+    static unsigned char pixels[640 * 480 * 4];
+    if (u->s->camera_preview && u->viz_area && gtk_widget_get_mapped(u->viz_area))
+        pad_viz_camera(u->viz_area, server_camera_snapshot(u->srv, pixels) ? pixels : NULL);
+    return G_SOURCE_CONTINUE;
+}
+
 static gboolean viz_tick(gpointer p) {
     ui_t *u = p;
     wupstream_input_t in;
@@ -2419,6 +2445,7 @@ ui_t *ui_new(settings_t *s, server_t *srv) {
 
     g_timeout_add(500, status_tick, u);
     g_timeout_add(100, viz_tick, u);
+    g_timeout_add(33, camera_preview_tick, u);
 
     /* WUP_START_VISIBLE: display the settings window on the FIRST launch.
      * The titlebar X and WM_DELETE_WINDOW still hide it to the system tray.

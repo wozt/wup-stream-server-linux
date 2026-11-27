@@ -64,6 +64,8 @@ typedef struct {
     input_cfg_t input;
     int pad_brightness; /* -1: leave client setting alone; 1..6: last selected level */
     unsigned long pad_brightness_revision; /* runtime only: explicit GTK commands */
+    int camera_announce;
+    int camera_preview; /* runtime only */
     int audio_pc_to_pad;
     int audio_pad_to_pc;
     int pad_volume_controls_pc; /* WUP_V96_PAD_VOLUME */

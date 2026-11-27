@@ -151,6 +151,7 @@ settings_t *settings_load(void) {
         s->input.deadzone = json_int(in, "deadzone", s->input.deadzone);
         s->input.sensitivity = json_int(in, "sensitivity", s->input.sensitivity);
         s->input.invert_y = json_int(in, "invert_y", 0);
+        s->camera_announce = json_int(in, "camera_announce", 0) != 0;
         s->input.gyro_mode = json_int(in, "gyro_mode", s->input.gyro_mode);
         s->input.gyro_sens = json_int(in, "gyro_sens", s->input.gyro_sens);
         if (json_object_has_member(in, "gyro_bias")) {
@@ -257,6 +258,7 @@ void settings_save(settings_t *s) {
     json_object_set_int_member(in, "deadzone", s->input.deadzone);
     json_object_set_int_member(in, "sensitivity", s->input.sensitivity);
     json_object_set_int_member(in, "invert_y", s->input.invert_y);
+    json_object_set_int_member(in, "camera_announce", s->camera_announce);
     json_object_set_int_member(in, "gyro_mode", s->input.gyro_mode);
     json_object_set_int_member(in, "gyro_sens", s->input.gyro_sens);
     JsonArray *gb = json_array_new();

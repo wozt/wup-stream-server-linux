@@ -16,6 +16,8 @@ cairo = dependency('cairo')
 xinerama = dependency('xinerama')
 json_glib = dependency('json-glib-1.0')
 swscale = dependency('libswscale')
+avcodec = dependency('libavcodec')
+avutil = dependency('libavutil')
 drm = dependency('libdrm')
 gbm = dependency('gbm')
 egl = dependency('egl')
@@ -46,12 +48,13 @@ executable('wupstreamd',
   'src/select.c',
   'src/window_pick.c',
   'src/server.c',
+  'src/camera.c',
   'src/ui.c',
   'src/viz.c',
   'src/i18n.c', # WUP_V6_JSON_LANGUAGES
   wup_dep[1], # generated wupstream.h (orders C compilation after fetch)
   include_directories: [include_directories('src')],
-  dependencies: [gtkdep, pangocairo, x11, xrandr, xtst, xext, xinerama, json_glib, threads, m_dep, swscale, drm, gbm, egl, gles, xcb, xcbshm, x11xcb, pulse, cairo],
+  dependencies: [gtkdep, pangocairo, x11, xrandr, xtst, xext, xinerama, json_glib, threads, m_dep, swscale, avcodec, avutil, drm, gbm, egl, gles, xcb, xcbshm, x11xcb, pulse, cairo],
   link_with: wup_dep[0], # generated libwupstream.a
   install: true)
 
